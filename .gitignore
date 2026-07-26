@@ -1,0 +1,48 @@
+# Directories excluded from GitHub
+.trae/
+规划执行/
+openspec/
+
+# Temporary test / scratch scripts
+_run_wrapper.sh
+_validate.py
+_run_tests.py
+_test_orchestrator.py
+orch_test.log
+xplan_sdk_test.log
+_*.py
+_*.sh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 环境变量
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 测试/缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Docker
+*.log
