@@ -2,6 +2,8 @@
 
 > Agent Plan mechanism based on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction).
 
+**中文文档**：[README_zh.md](README_zh.md)
+
 XPlan elevates a Plan from a "step list" to a **checkable, correctable, executable runtime object**, systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
 
 ---
@@ -18,7 +20,9 @@ XPlan elevates a Plan from a "step list" to a **checkable, correctable, executab
 - **Iterative Plan Generation** — Generate–evaluate–correct loop with configurable iteration cap.
 - **DAG Plan Generation** (optional) — Dependency-aware plan as a directed acyclic graph (linear plan is the default).
 - **Plan Quality Evaluation** — Offline G4C 5-dimension analysis + online Prometheus metrics.
-- **Replan Effect Evaluation** — Five metrics: root cause accuracy, replan start accuracy, result reuse rate, replan recovery success rate, replan oscillation rate.
+- **Replan Effect Evaluation** - Five metrics: root cause accuracy, replan start accuracy, result reuse rate, replan recovery success rate, replan oscillation rate.
+- **TAO (Think-Action-Observation) Loop** - Step-level controlled state loop with five structured judgments per round (goal, state, path, stop, risk), candidate action space management, evidence-bound fact extraction, and an optional double-layer supervisor loop for goal drift detection.
+- **TAO Quality Evaluation** - Think/Action/Observation/Overall four-layer metrics, LLM-as-judge evaluation, and golden-answer comparison.
 
 ## Tech Stack
 
@@ -44,7 +48,8 @@ XPlan/
 │   │   ├── backtracking.py         # BacktrackingLevel / CandidatePath / JumpRule
 │   │   ├── trust_state.py          # FactEntry / TrustState / TrustStateReport
 │   │   ├── tracing.py              # TracingPoint / FailureTracingResult / StepRecord
-│   │   └── orchestrator.py         # OrchestratorConfig / OrchestratorResult
+│   │   ├── tao.py                   # TAO data models (TAOState, ThinkResult, ActionCandidate, etc.)
+│   │   └── orchestrator.py          # OrchestratorConfig / OrchestratorResult
 │   ├── prompts/                    # Prompt modules (one per G4C element)
 │   ├── services/                   # LLMService, RAGService, ConstraintManager,
 │   │                               # TrustStateManager, CandidatePathManager
@@ -60,11 +65,17 @@ XPlan/
 │   │   ├── backtracking_engine.py  # 5 levels + progressive expansion
 │   │   ├── cross_turn_tracker.py   # Cross-turn contamination tracking
 │   │   ├── failure_tracer.py       # Failure backtracking + root cause localization
-│   │   └── orchestrator.py         # PlanOrchestrator (main entrypoint engine)
-│   ├── sdk/                        # Python SDK — async client for the REST API
+│   │   ├── orchestrator.py         # PlanOrchestrator (main entrypoint engine)
+│   │   ├── tao_engine.py            # TAO controlled state loop engine
+│   │   ├── tao_think_engine.py      # Five structured Think judgments
+│   │   ├── tao_action_runtime.py    # Action abstraction & execution
+│   │   ├── tao_observation_interpreter.py # Raw output -> structured Observation
+│   │   └── tao_loop_controller.py   # Loop exit controller
+│   ├── sdk/                        # Python SDK - async client for the REST API
 │   │   ├── client.py               # XPlanClient (all 31 endpoints)
 │   │   └── exceptions.py           # XPlanError / APIError / ConnectionError / ...
 │   └── evaluation/                 # Metrics, offline analyzer, ReplanEvaluator
+│       └── tao_evaluator.py        # TAO quality evaluation (Think/Action/Observation metrics)
 ├── tests/
 │   ├── test_plan.py                # Unit tests
 │   └── test_live.py                # Live LLM integration test
@@ -190,10 +201,31 @@ All routes are prefixed with `/api`. **`POST /api/plan/run` is the primary entry
 | `POST` | `/api/evaluation/replan/annotate` | Import manual annotations for events |
 | `GET` | `/api/evaluation/replan/test-set` | Export Replan evaluation test set |
 
+### TAO (Think-Action-Observation)
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/api/tao/run` | Run the full TAO controlled state loop |
+| `POST` | `/api/tao/think` | Atomic TAO Think (five structured judgments) |
+| `POST` | `/api/tao/act` | Atomic TAO Action execution |
+| `POST` | `/api/tao/observe` | Atomic TAO Observation interpretation |
+| `POST` | `/api/evaluation/tao/event` | Record a TAO evaluation event |
+| `GET` | `/api/evaluation/tao/metrics` | Get TAO evaluation metrics (Think/Action/Observation/Overall) |
+| `GET` | `/api/evaluation/tao/report` | Get TAO evaluation report with suggestions |
+| `POST` | `/api/evaluation/tao/annotate` | Import golden-answer annotations for TAO |
+| `GET` | `/api/evaluation/tao/test-set` | Export TAO evaluation test set |
+| `POST` | `/api/evaluation/tao/judge` | Run LLM-as-judge on a single TAO round |
+
 ## Testing
 
 ```bash
 python -m pytest tests/ -v
+
+# TAO unit tests
+python -m pytest tests/test_tao.py -v
+
+# Live TAO end-to-end test (requires API_KEY)
+python tests/test_tao_live.py
 ```
 
 ## Python SDK
@@ -210,6 +242,14 @@ async def main():
         print(result["status"], result["replan_count"])
 
 asyncio.run(main())
+```
+
+```python
+# Enable TAO loop for step-level execution
+from xplan.models import OrchestratorConfig
+
+config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
+result = await client.run_plan(user_input="...", config=config)
 ```
 
 The primary SDK method is `XPlanClient.run_plan()`; 30 additional methods mirror the granular REST endpoints (generate, verify, execute, trace, replan, tcc_replan, constraints, trust state, backtracking, candidate paths, evaluation, metrics, DAG). Full SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (中文).

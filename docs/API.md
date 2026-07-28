@@ -131,6 +131,11 @@ This endpoint internally calls all other endpoints' underlying engines. For gran
 | `enable_progressive_backtracking` | boolean | `true` | Enable progressive backtracking on failure |
 | `enable_tcc_replan` | boolean | `false` | Enable TCC Replan for high-risk scenarios |
 | `max_replan_count` | integer | `3` | Max replan attempts during execution |
+| `use_tao` | boolean | `false` | Execute each plan step via the TAO (Think-Action-Observation) controlled state loop |
+| `tao_max_loops` | integer | `10` | Max TAO inner loop rounds per step |
+| `tao_max_time` | float | `300.0` | Max TAO execution time per step in seconds |
+| `tao_supervisor_interval` | integer | `3` | Trigger the TAO outer supervisor loop every N inner rounds (`0` disables it) |
+| `tao_supervisor_interval_seconds` | float | `0.0` | Trigger the TAO outer supervisor loop asynchronously every N seconds (`0` disables it) |
 
 **Response** (OrchestratorResult)
 
@@ -1867,6 +1872,329 @@ curl -X POST http://localhost:8000/api/dag/validate \
 
 ---
 
+### 2.9 TAO (Think-Action-Observation)
+
+TAO is a controlled state loop for step-level execution. The Plan defines the macro path; TAO decides how each concrete step moves forward and interprets feedback. It maintains five runtime states — **Goal / Action / Observation / Fact / Control** — and takes exactly one exit per round: `continue` / `finish` / `clarify` / `retry` / `replan` / `interrupt`.
+
+Each round runs: **Think** (five structured judgments: goal, state, path, stop, risk) → **Action** (execute the selected candidate) → **Observation** (interpret the raw output, extract evidence-bound facts) → **state update** → **exit decision**. An optional outer supervisor loop checks goal drift, constraint violations and stagnation every N inner rounds. Control State prevents runaway execution via `max_loops` / `max_time`.
+
+TAO can also be enabled per step inside the main orchestration flow via `OrchestratorConfig.use_tao` (see [POST /api/plan/run](#post-apiplanrun)).
+
+#### POST /api/tao/run
+
+Run the full TAO loop until an exit other than continue/retry is taken.
+
+**Request Body**
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `user_input` | string | Yes | — | User's goal or request |
+| `plan` | Plan \| null | No | `null` | Optional G4C Plan providing goal/context anchoring |
+| `candidate_actions` | array[ActionCandidate] | No | `[]` | Full candidate action space (coarse-filtered inside the engine) |
+| `max_loops` | integer | No | `10` | Maximum TAO inner loop rounds |
+| `max_time` | float | No | `300.0` | Maximum execution time in seconds |
+
+**Response** (TAOResult)
+
+| Field | Type | Description |
+|---|---|---|
+| `exit_type` | string | Final exit: `finish` / `clarify` / `replan` / `interrupt` |
+| `final_output` | string | Final output text (when `exit_type == "finish"`) |
+| `clarify_message` | string | Question to the user (when `exit_type == "clarify"`) |
+| `exit_reason` | string | Exit reason detail |
+| `used_loops` | integer | Total loop rounds used |
+| `total_actions` | integer | Total actions executed |
+| `exit_history` | array[TAOExitRecord] | Exit decision record of every round |
+| `state` | TAOState \| null | Final TAO state snapshot |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:8000/api/tao/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_input": "Summarize the Q3 sales report",
+    "candidate_actions": [
+      {
+        "name": "read_report",
+        "type": "tool_call",
+        "description": "Read the sales report file",
+        "params_schema": {"path": "report file path"}
+      },
+      {
+        "name": "ask_user",
+        "type": "user_interaction",
+        "description": "Ask the user for missing information"
+      }
+    ],
+    "max_loops": 10,
+    "max_time": 300.0
+  }'
+```
+
+```json
+{
+  "exit_type": "finish",
+  "final_output": "Q3 sales grew 12% QoQ, driven by ...",
+  "clarify_message": "",
+  "exit_reason": "Success criteria satisfied",
+  "used_loops": 3,
+  "total_actions": 3,
+  "exit_history": [
+    {"exit_type": "continue", "reason": "...", "used_loops": 1},
+    {"exit_type": "finish", "reason": "Success criteria satisfied", "used_loops": 3}
+  ],
+  "state": { "goal_state": {"final_goal": "..."}, "facts": {}, "control": {"used_loops": 3} }
+}
+```
+
+---
+
+#### POST /api/tao/think
+
+Atomic TAO Think: run one Think round on the given state. The caller carries the `TAOState` between calls (stateful client, stateless server).
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `state` | TAOState | Yes | Current TAO state |
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `think` | ThinkResult | Structured Think result (five judgments) |
+| `exit` | TAOExitRecord | Exit decision for this round |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:8000/api/tao/think \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {
+      "goal_state": {"final_goal": "Summarize the Q3 sales report", "current_goal": "Read the report"},
+      "candidate_actions": [{"name": "read_report", "type": "tool_call"}],
+      "control": {"max_loops": 10, "used_loops": 0}
+    }
+  }'
+```
+
+```json
+{
+  "think": {
+    "current_goal": "Read the report",
+    "facts_sufficient": false,
+    "selected_action": "read_report",
+    "action_params": {"path": "q3-sales.md"},
+    "should_stop": false,
+    "exit_decision": "continue",
+    "reason": "Report content is required before summarizing",
+    "risk_level": "low"
+  },
+  "exit": {"exit_type": "continue", "reason": "...", "used_loops": 0, "overridden": false}
+}
+```
+
+---
+
+#### POST /api/tao/act
+
+Atomic TAO Action execution. Executes the named action from the candidate space carried in the state. Illegal actions (outside the candidate space) and unsatisfied hard preconditions are rejected with a `400` error.
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `state` | TAOState | Yes | Current TAO state (carries the candidate space) |
+| `action_name` | string | Yes | Selected action name (must be in the candidate space) |
+| `params` | object | No | Action parameters (default `{}`) |
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `record` | ActionRecord | Executed action record (status `done` or `failed`) |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:8000/api/tao/act \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {"candidate_actions": [{"name": "read_report", "type": "tool_call"}]},
+    "action_name": "read_report",
+    "params": {"path": "q3-sales.md"}
+  }'
+```
+
+```json
+{
+  "record": {
+    "action_id": "act-1a2b3c4d",
+    "name": "read_report",
+    "type": "tool_call",
+    "input": {"path": "q3-sales.md"},
+    "output": "Q3 sales grew 12% QoQ ...",
+    "status": "done",
+    "retry_count": 0
+  }
+}
+```
+
+---
+
+#### POST /api/tao/observe
+
+Atomic TAO Observation interpretation. Code performs field/format checks; the LLM performs semantic interpretation (fact extraction, evidence binding, gap identification). Note: HTTP 200 != real success — empty data, permission errors and anomalies are detected.
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `state` | TAOState | Yes | Current TAO state |
+| `record` | ActionRecord | Yes | Action record to interpret |
+| `expectation` | string | No | Optional expectation for the output |
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `observation` | Observation | Structured interpretation of the raw output |
+
+**Example**
+
+```bash
+curl -X POST http://localhost:8000/api/tao/observe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {"goal_state": {"final_goal": "Summarize the Q3 sales report"}},
+    "record": {"action_id": "act-1a2b3c4d", "name": "read_report", "output": "Q3 sales grew 12% QoQ ...", "status": "done"}
+  }'
+```
+
+```json
+{
+  "observation": {
+    "observation_id": "obs-5e6f7a8b",
+    "action_id": "act-1a2b3c4d",
+    "execution_status": "success",
+    "new_facts": [
+      {"key": "q3_sales_growth", "value": "12% QoQ", "category": "confirmed", "evidence": "act-1a2b3c4d"}
+    ],
+    "missing_information": [],
+    "progress": true,
+    "information_gain": "high",
+    "summary": "Report read successfully; growth figures extracted"
+  }
+}
+```
+
+#### POST /api/evaluation/tao/event
+
+Record a TAO evaluation event containing Think / Action / Observation round data for subsequent metric computation.
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `event` | TAOEvaluationEvent | Yes | TAO evaluation event |
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | boolean | Whether the event was recorded |
+| `event_id` | string | Event ID |
+| `total_events` | integer | Total recorded events |
+
+---
+
+#### GET /api/evaluation/tao/metrics
+
+Get aggregated TAO evaluation metrics across four layers: Think, Action, Observation and Overall.
+
+**Response** (TAOEvaluationMetrics)
+
+| Field | Type | Description |
+|---|---|---|
+| `think` | ThinkMetrics | Think-phase metrics |
+| `action` | ActionMetrics | Action execution metrics |
+| `observation` | ObservationMetrics | Observation interpretation metrics |
+| `overall` | OverallMetrics | Overall task metrics |
+
+---
+
+#### GET /api/evaluation/tao/report
+
+Generate a TAO evaluation report with metrics, abnormal samples and optimization suggestions.
+
+**Response** (TAOEvaluationReport)
+
+| Field | Type | Description |
+|---|---|---|
+| `metrics` | TAOEvaluationMetrics | Aggregated metrics |
+| `suggestions` | array[TAOEvaluationSuggestion] | Optimization suggestions |
+| `abnormal_samples` | array[string] | Abnormal sample event IDs |
+| `summary` | string | Natural-language summary |
+
+---
+
+#### POST /api/evaluation/tao/annotate
+
+Import golden-answer annotations for computing accuracy metrics such as action selection and fact extraction.
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `annotations` | array[GoldenAnswer] | Yes | List of golden answers keyed by event_id |
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | boolean | Whether import succeeded |
+| `annotated_count` | integer | Number of imported annotations |
+
+---
+
+#### GET /api/evaluation/tao/test-set
+
+Export a test set for human annotation with golden-answer fields left empty.
+
+**Response**
+
+| Field | Type | Description |
+|---|---|---|
+| `test_set` | array[dict] | Test set |
+| `total` | integer | Sample count |
+
+---
+
+#### POST /api/evaluation/tao/judge
+
+Run LLM-as-judge on a single TAO round.
+
+**Request Body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `request` | LLMJudgeRequest | Yes | Judge request for a TAO round |
+
+**Response** (LLMJudgeResult)
+
+| Field | Type | Description |
+|---|---|---|
+| `event_id` | string | Event ID |
+| `round_index` | integer | Round index |
+| `source` | string | Source: `llm` / `code` |
+| `scores` | object | Metric scores |
+| `reasoning` | string | Scoring reasoning |
+
+---
+
 ## 3. Data Models
 
 ### Plan
@@ -2125,6 +2453,98 @@ Replan effectiveness evaluation metrics.
 | `status` | string | `"available"` | Status: `available` / `failed` / `tried` |
 | `reason` | string | `""` | Failure reason (when failed) |
 | `failure_id` | string | `""` | Failure record ID |
+
+### TAOState
+
+Aggregate TAO runtime state, carried across loop rounds (and between atomic API calls).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `goal_state` | GoalState | — | Goal State: `final_goal`, `current_goal`, `success_criteria`, `current_goal_completed` |
+| `actions` | array[ActionRecord] | `[]` | Action State: executed action records in order |
+| `observations` | array[Observation] | `[]` | Observation State: structured interpretations in order |
+| `facts` | object | `{}` | Fact State: fact key → FactItem (`key` / `value` / `category` / `evidence`) |
+| `control` | ControlState | `{}` | Control State: `max_loops` / `used_loops` / `max_time` / `start_time` / `exit_reason` / `max_action_retries` |
+| `plan_step_id` | string | `""` | Associated Plan step ID, if any |
+| `candidate_actions` | array[ActionCandidate] | `[]` | Coarse-filtered candidate action space |
+
+### ActionCandidate
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `name` | string | — | Unique action name |
+| `type` | string | `"tool_call"` | Action type: `tool_call` / `internal_api` / `user_interaction` / `aggregate` |
+| `description` | string | `""` | What this action does |
+| `params_schema` | object | `{}` | Expected parameter schema |
+| `preconditions` | array[string] | `[]` | Hard preconditions (fact keys that must be confirmed first) |
+| `rollbackable` | boolean | `true` | Whether this action can be rolled back |
+| `estimated_cost` | string | `"low"` | Rough cost estimate: `low` / `medium` / `high` |
+| `metadata` | object | `{}` | Extra business metadata (e.g. `plan_nodes` / `intents` whitelists, `sub_actions`) |
+
+### ActionRecord
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `action_id` | string | auto | Unique action execution ID (`act-xxxxxxxx`) |
+| `name` | string | — | Action name (from the candidate space) |
+| `type` | string | `"tool_call"` | Action type |
+| `tool_name` | string | `""` | Underlying tool/API name, if any |
+| `input` | object | `{}` | Action input parameters |
+| `output` | any | `null` | Raw action output |
+| `status` | string | `"pending"` | `pending` / `running` / `done` / `failed` |
+| `error` | string | `""` | Error message when failed |
+| `start_time` | string | auto | Start time (ISO 8601) |
+| `end_time` | string \| null | `null` | End time |
+| `retry_count` | integer | `0` | Number of retries performed |
+| `rollbackable` | boolean | `true` | Whether this action is rollbackable |
+
+### Observation
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `observation_id` | string | auto | Unique observation ID (`obs-xxxxxxxx`) |
+| `action_id` | string | `""` | ID of the interpreted action |
+| `execution_status` | string | `"success"` | `success` / `partial_success` / `failed` (HTTP 200 != real success) |
+| `new_facts` | array[ObservationFact] | `[]` | Newly extracted facts, each bound to evidence |
+| `missing_information` | array[string] | `[]` | Information still missing after this action |
+| `state_changes` | array[string] | `[]` | Summary of state changes caused by this action |
+| `anomalies` | array[string] | `[]` | Detected anomalies or violated assumptions |
+| `suggested_next_action` | string | `""` | Suggested next action name (advisory only) |
+| `progress` | boolean | `false` | Whether real progress was made |
+| `information_gain` | string | `"low"` | `low` / `medium` / `high` |
+| `summary` | string | `""` | Short natural-language summary |
+
+### ThinkResult
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `current_goal` | string | `""` | Goal being pursued this round |
+| `success_criteria_satisfied` | boolean | `false` | Whether final success criteria are satisfied |
+| `current_goal_completed` | boolean | `false` | Whether the current stage goal is completed |
+| `facts_sufficient` | boolean | `false` | Whether known facts are sufficient |
+| `missing_slots` | array[string] | `[]` | Missing fact slots |
+| `unverified_assumptions` | array[string] | `[]` | Assumptions not yet verified |
+| `fact_conflicts` | array[string] | `[]` | Detected fact conflicts |
+| `selected_action` | string | `""` | Selected action name (from the candidate space) |
+| `action_params` | object | `{}` | Action parameters |
+| `should_stop` | boolean | `false` | Whether the loop should stop |
+| `exit_decision` | string | `"continue"` | `continue` / `finish` / `clarify` / `retry` / `replan` / `interrupt` |
+| `reason` | string | `""` | Evidence-based reason (must reference Goal/Context/Constraint) |
+| `risk_level` | string | `"low"` | `low` / `medium` / `high` |
+| `risk_reason` | string | `""` | Explanation when risk is not low |
+
+### TAOResult
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `exit_type` | string | — | Final exit type |
+| `final_output` | string | `""` | Final output text (when finish) |
+| `clarify_message` | string | `""` | Question to the user (when clarify) |
+| `exit_reason` | string | `""` | Exit reason detail |
+| `used_loops` | integer | `0` | Total loop rounds used |
+| `total_actions` | integer | `0` | Total actions executed |
+| `exit_history` | array[TAOExitRecord] | `[]` | Exit decision record of every round |
+| `state` | TAOState \| null | `null` | Final TAO state snapshot |
 
 ---
 

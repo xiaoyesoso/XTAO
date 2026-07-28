@@ -2,6 +2,8 @@
 
 > 基于 G4C 方法论的 Agent Plan 机制
 
+**English**: [README.md](README.md)
+
 **G4C**（Goal、Context、Choice、Checkpoint、Correction）将 Plan 从「步骤列表」升级为**可检查、可纠偏、可执行的运行时对象**，系统性消除 Agent 执行过程中的目标不确定性、上下文不确定性、路径不确定性、过程不确定性与失败不确定性。
 
 ---
@@ -34,6 +36,8 @@
 - **DAG 式 Plan 生成（可选）**：支持有向无环图结构，含环检测与拓扑排序；线性 Plan 为默认模式。
 - **Plan 质量评估**：离线分析（G4C 五维度）+ 线上监控（Prometheus 指标）。
 - **Replan 效果评估**：根因准确率、Replan 起点准确率、结果复用率、Replan 恢复成功率、Replan 振荡率五项指标。
+- **TAO（Think-Action-Observation）执行引擎**：步骤级受控状态循环，每轮包含五类结构化判断（目标、状态、路径、停止、风险），候选动作空间管理，证据绑定事实提取，可选双层监督循环检测目标漂移。
+- **TAO 质量评估**：Think/Action/Observation/整体四层指标，支持 LLM as Judge 评估与人工标注对比。
 
 ---
 
@@ -70,7 +74,8 @@ XPlan/
 │       │   ├── tcc.py             # TCC 三阶段模型
 │       │   ├── trust_state.py     # 可信状态模型
 │       │   ├── backtracking.py    # 回溯层级模型
-│       │   └── tracing.py         # 失败回溯模型
+│       │   ├── tracing.py         # 失败回溯模型
+│       │   └── tao.py                   # TAO 数据模型（TAOState、ThinkResult、ActionCandidate 等）
 │       ├── prompts/               # Prompt 模块（每个 G4C 要素一个）
 │       │   ├── goal_prompt.py
 │       │   ├── context_prompt.py
@@ -101,7 +106,12 @@ XPlan/
 │       │   ├── backtracking_engine.py     # 回溯引擎
 │       │   ├── cross_turn_tracker.py      # 跨轮次追踪
 │       │   ├── failure_tracer.py          # 失败回溯与根因定位
-│       │   └── orchestrator.py            # 主编排引擎（主接口实现）
+│       │   ├── orchestrator.py            # 主编排引擎（主接口实现）
+│       │   ├── tao_engine.py            # TAO 受控状态循环引擎
+│       │   ├── tao_think_engine.py      # 五类结构化 Think 判断
+│       │   ├── tao_action_runtime.py    # Action 抽象与执行
+│       │   ├── tao_observation_interpreter.py # 原始输出转结构化 Observation
+│       │   └── tao_loop_controller.py   # 循环出口控制器
 │       ├── sdk/                   # Python SDK（REST API 异步客户端）
 │       │   ├── client.py                 # XPlanClient（覆盖全部 31 个接口）
 │       │   └── exceptions.py             # XPlanError / APIError / ConnectionError 等
@@ -109,7 +119,8 @@ XPlan/
 │           ├── metrics.py                 # Prometheus 指标
 │           ├── offline_analyzer.py        # 离线 G4C 分析
 │           ├── replan_evaluator.py        # Replan 效果评估
-│           └── user_correction_detector.py # 用户纠偏检测
+│           ├── user_correction_detector.py # 用户纠偏检测
+│           └── tao_evaluator.py        # TAO 质量评估（Think/Action/Observation 指标）
 ├── tests/                         # 单元测试与集成测试
 ├── Dockerfile
 ├── docker-compose.yml
@@ -240,6 +251,21 @@ docker compose up -d
 | POST | `/api/evaluation/replan/annotate` | 导入手工标注结果 |
 | GET | `/api/evaluation/replan/test-set` | 导出 Replan 评估测试集 |
 
+### TAO（Think-Action-Observation）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/tao/run` | 运行完整 TAO 受控状态循环 |
+| POST | `/api/tao/think` | 原子 Think 接口（五类结构化判断） |
+| POST | `/api/tao/act` | 原子 Action 执行接口 |
+| POST | `/api/tao/observe` | 原子 Observation 解释接口 |
+| POST | `/api/evaluation/tao/event` | 记录 TAO 评估事件 |
+| GET | `/api/evaluation/tao/metrics` | 获取 TAO 评估指标（Think/Action/Observation/整体） |
+| GET | `/api/evaluation/tao/report` | 获取 TAO 评估报告 |
+| POST | `/api/evaluation/tao/annotate` | 导入 TAO 人工标注 |
+| GET | `/api/evaluation/tao/test-set` | 导出 TAO 测试集 |
+| POST | `/api/evaluation/tao/judge` | TAO LLM as Judge 评估 |
+
 ---
 
 ## Python SDK
@@ -258,6 +284,14 @@ async def main():
 asyncio.run(main())
 ```
 
+```python
+# 启用 TAO 循环执行步骤
+from xplan.models import OrchestratorConfig
+
+config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
+result = await client.run_plan(user_input="...", config=config)
+```
+
 SDK 主方法是 `XPlanClient.run_plan()`；另外 30 个方法镜像细粒度的 REST 接口（generate、verify、execute、trace、replan、tcc_replan、constraints、可信状态、回溯、候选路径、评估、metrics、DAG）。完整 SDK 文档：[docs/SDK_zh.md](docs/SDK_zh.md)（中文）/ [docs/SDK.md](docs/SDK.md)（English）。
 
 ---
@@ -270,6 +304,12 @@ python -m pytest tests/ -v
 
 # 仅运行单元测试
 python -m pytest tests/test_plan.py -v
+
+# TAO 单元测试
+python -m pytest tests/test_tao.py -v
+
+# TAO 真实模型端到端测试（需要 API_KEY）
+python tests/test_tao_live.py
 ```
 
 ---

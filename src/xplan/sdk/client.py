@@ -189,7 +189,9 @@ class XPlanClient:
             user_input: User's goal or request.
             conversation_history: Optional conversation history for context.
             config: Optional :class:`~xplan.models.OrchestratorConfig` (or dict)
-                controlling which subsystems are enabled.
+                controlling which subsystems are enabled. Set ``use_tao=True``
+                on the config to execute each plan step via the TAO
+                (Think-Action-Observation) controlled state loop.
 
         Returns:
             :class:`~xplan.models.OrchestratorResult` as a dict.
@@ -200,6 +202,120 @@ class XPlanClient:
             "config": _to_payload(config) if config is not None else None,
         }
         return await self._request("POST", "/plan/run", json=payload)
+
+    # ── TAO (Think-Action-Observation) loop ────────────────
+
+    async def run_tao(
+        self,
+        user_input: str,
+        plan: Any = None,
+        candidate_actions: list[Any] | None = None,
+        max_loops: int = 10,
+        max_time: float = 300.0,
+    ) -> dict[str, Any]:
+        """POST /api/tao/run - Run the full TAO controlled state loop.
+
+        The TAO loop drives step-level execution through five runtime states
+        (Goal / Action / Observation / Fact / Control): Think produces five
+        structured judgments, the selected action is executed, and the raw
+        output is interpreted into an evidence-bound Observation. The loop
+        exits via continue / finish / clarify / retry / replan / interrupt,
+        and an optional outer supervisor loop checks goal drift, constraint
+        violations and stagnation every N inner rounds.
+
+        Args:
+            user_input: User's goal or request.
+            plan: Optional :class:`~xplan.models.Plan` for goal/context anchoring.
+            candidate_actions: Full candidate action space (list of
+                :class:`~xplan.models.ActionCandidate` or dicts); coarse-filtered
+                inside the engine.
+            max_loops: Maximum TAO inner loop rounds.
+            max_time: Maximum execution time in seconds.
+
+        Returns:
+            :class:`~xplan.models.TAOResult` as a dict.
+        """
+        payload = {
+            "user_input": user_input,
+            "plan": _to_payload(plan) if plan is not None else None,
+            "candidate_actions": _to_payload(candidate_actions or []),
+            "max_loops": max_loops,
+            "max_time": max_time,
+        }
+        return await self._request("POST", "/tao/run", json=payload)
+
+    async def tao_think(self, state: Any) -> dict[str, Any]:
+        """POST /api/tao/think - Atomic TAO Think round.
+
+        Runs one Think round on the given state, producing a structured
+        ThinkResult (five judgments: goal, state, path, stop, risk) plus the
+        loop controller's exit decision. The caller carries the
+        :class:`~xplan.models.TAOState` between calls.
+
+        Args:
+            state: Current :class:`~xplan.models.TAOState` (or dict).
+
+        Returns:
+            Dict with ``think`` (ThinkResult) and ``exit`` (TAOExitRecord).
+        """
+        return await self._request("POST", "/tao/think", json={"state": _to_payload(state)})
+
+    async def tao_act(
+        self,
+        state: Any,
+        action_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """POST /api/tao/act - Atomic TAO Action execution.
+
+        Executes the named action from the candidate space carried in the
+        state. Illegal actions (outside the candidate space) and unsatisfied
+        hard preconditions are rejected with a 400 error.
+
+        Args:
+            state: Current :class:`~xplan.models.TAOState` (or dict) carrying
+                the candidate action space.
+            action_name: Selected action name (must be in the candidate space).
+            params: Optional action parameters.
+
+        Returns:
+            Dict with ``record`` (:class:`~xplan.models.ActionRecord`).
+        """
+        payload = {
+            "state": _to_payload(state),
+            "action_name": action_name,
+            "params": params or {},
+        }
+        return await self._request("POST", "/tao/act", json=payload)
+
+    async def tao_observe(
+        self,
+        state: Any,
+        record: Any,
+        expectation: str = "",
+    ) -> dict[str, Any]:
+        """POST /api/tao/observe - Atomic TAO Observation interpretation.
+
+        Interprets an action's raw output into a structured Observation:
+        code performs field/format checks, the LLM performs semantic
+        interpretation (fact extraction, evidence binding, gap
+        identification). Note: HTTP 200 != real success; empty data and
+        anomalies are detected.
+
+        Args:
+            state: Current :class:`~xplan.models.TAOState` (or dict).
+            record: :class:`~xplan.models.ActionRecord` (or dict) to interpret.
+            expectation: Optional expectation for the output.
+
+        Returns:
+            Dict with ``observation`` (:class:`~xplan.models.Observation`).
+        """
+        payload = {
+            "state": _to_payload(state),
+            "record": _to_payload(record),
+            "expectation": expectation,
+        }
+        return await self._request("POST", "/tao/observe", json=payload)
 
     # ── Plan operations ──────────────────────────────────────
 
@@ -403,6 +519,36 @@ class XPlanClient:
     async def export_replan_test_set(self) -> dict[str, Any]:
         """GET /api/evaluation/replan/test-set - Export Replan evaluation test set."""
         return await self._request("GET", "/evaluation/replan/test-set")
+
+    async def record_tao_evaluation_event(self, event: Any) -> dict[str, Any]:
+        """POST /api/evaluation/tao/event - Record a TAO evaluation event."""
+        return await self._request(
+            "POST", "/evaluation/tao/event", json={"event": _to_payload(event)}
+        )
+
+    async def get_tao_metrics(self) -> dict[str, Any]:
+        """GET /api/evaluation/tao/metrics - Get TAO evaluation metrics."""
+        return await self._request("GET", "/evaluation/tao/metrics")
+
+    async def get_tao_report(self) -> dict[str, Any]:
+        """GET /api/evaluation/tao/report - Get TAO evaluation report."""
+        return await self._request("GET", "/evaluation/tao/report")
+
+    async def annotate_tao(self, annotations: list[Any]) -> dict[str, Any]:
+        """POST /api/evaluation/tao/annotate - Import TAO golden answers."""
+        return await self._request(
+            "POST", "/evaluation/tao/annotate", json={"annotations": _to_payload(annotations)}
+        )
+
+    async def export_tao_test_set(self) -> dict[str, Any]:
+        """GET /api/evaluation/tao/test-set - Export TAO evaluation test set."""
+        return await self._request("GET", "/evaluation/tao/test-set")
+
+    async def tao_llm_judge(self, request: Any) -> dict[str, Any]:
+        """POST /api/evaluation/tao/judge - Run LLM-as-judge on a TAO round."""
+        return await self._request(
+            "POST", "/evaluation/tao/judge", json={"request": _to_payload(request)}
+        )
 
     # ── Metrics ──────────────────────────────────────────────
 

@@ -25,6 +25,7 @@ instances directly without dealing with raw JSON.
   - [Trust State](#trust-state)
   - [Backtracking](#backtracking)
   - [Candidate Paths](#candidate-paths)
+  - [TAO Loop](#tao-loop)
 - [Error Handling](#error-handling)
 - [Using Models vs Dicts](#using-models-vs-dicts)
 - [Sync Usage](#sync-usage)
@@ -139,6 +140,11 @@ result = await client.run_plan(
 | `enable_progressive_backtracking` | `True`  | Enable progressive backtracking on failure.                |
 | `enable_tcc_replan`               | `False` | Enable TCC Replan for high-risk scenarios.                 |
 | `max_replan_count`                | `3`     | Max replan attempts during execution.                      |
+| `use_tao`                           | `False` | Execute steps via the TAO controlled state loop.  |
+| `tao_max_loops`                     | `10`    | Max TAO inner loop rounds per step.                |
+| `tao_max_time`                      | `300.0` | Max TAO execution time per step in seconds.         |
+| `tao_supervisor_interval`           | `3`     | TAO outer supervisor loop interval (inner rounds).  |
+| `tao_supervisor_interval_seconds`   | `0.0`   | TAO async outer loop interval in seconds.            |
 
 The returned `OrchestratorResult` dict contains:
 
@@ -374,6 +380,87 @@ await client.register_decision(
 # When llm-extract fails, switch to the next available candidate
 new_path = await client.switch_candidate_path("extract-facts")
 print(new_path["new_path"])   # regex-extract
+```
+
+### TAO Loop
+
+TAO (Think-Action-Observation) is a controlled state loop for step-level
+execution. The Plan defines the macro path, while TAO decides how each
+concrete step moves forward and interprets feedback.
+
+#### `run_tao(user_input, plan=None, candidate_actions=None, max_loops=10, max_time=300.0) -> dict`
+`POST /api/tao/run` - Run the full TAO controlled state loop.
+
+```python
+from xplan.models import ActionCandidate, ActionType
+
+result = await client.run_tao(
+    user_input="Optimize my resume project experience",
+    candidate_actions=[
+        ActionCandidate(name="read_resume", type=ActionType.TOOL_CALL, description="Read resume"),
+        ActionCandidate(name="write_resume", type=ActionType.TOOL_CALL, description="Write optimized resume"),
+    ],
+    max_loops=6,
+)
+print(result["exit_type"])    # finish / clarify / replan / interrupt
+print(result["used_loops"])
+print(result["final_output"])
+```
+
+#### `tao_think(state) -> dict`
+`POST /api/tao/think` - Atomic TAO Think round.
+
+Runs one Think round on the given state, producing a structured ThinkResult
+(five judgments: goal, state, path, stop, risk) plus the loop controller's
+exit decision. The caller carries the TAOState between calls.
+
+#### `tao_act(state, action_name, params=None) -> dict`
+`POST /api/tao/act` - Atomic TAO Action execution.
+
+Executes the named action from the candidate space. Illegal actions and
+unsatisfied preconditions are rejected with a 400 error.
+
+#### `tao_observe(state, record, expectation="") -> dict`
+`POST /api/tao/observe` - Atomic TAO Observation interpretation.
+
+Interprets an action's raw output into a structured Observation with
+evidence-bound fact extraction.
+
+#### `record_tao_evaluation_event(event) -> dict`
+`POST /api/evaluation/tao/event` - Record a TAO evaluation event.
+
+#### `get_tao_metrics() -> dict`
+`GET /api/evaluation/tao/metrics` - Get aggregated TAO evaluation metrics
+(Think/Action/Observation/Overall).
+
+#### `get_tao_report() -> dict`
+`GET /api/evaluation/tao/report` - Get TAO evaluation report with
+metrics, abnormal samples and suggestions.
+
+#### `annotate_tao(annotations) -> dict`
+`POST /api/evaluation/tao/annotate` - Import human golden-answer annotations.
+
+#### `export_tao_test_set() -> dict`
+`GET /api/evaluation/tao/test-set` - Export TAO evaluation test set.
+
+#### `tao_llm_judge(request) -> dict`
+`POST /api/evaluation/tao/judge` - Run LLM-as-judge on a single TAO round.
+
+### TAO via `run_plan`
+
+TAO can also be enabled per-step within the main orchestration:
+
+```python
+from xplan.models import OrchestratorConfig
+
+config = OrchestratorConfig(
+    use_tao=True,
+    tao_max_loops=10,
+    tao_max_time=300.0,
+    tao_supervisor_interval=3,
+)
+result = await client.run_plan(user_input="...", config=config)
+# step_records will show tao_used=True, tao_loops, tao_exit per step
 ```
 
 ---

@@ -24,6 +24,7 @@ SDK 封装了 XPlan FastAPI 服务暴露的全部 REST 接口，并复用 `xplan
   - [可信状态](#可信状态)
   - [回溯](#回溯)
   - [候选路径](#候选路径)
+  - [TAO 循环](#tao-循环)
 - [错误处理](#错误处理)
 - [模型 vs 字典](#模型-vs-字典)
 - [同步用法](#同步用法)
@@ -135,6 +136,11 @@ result = await client.run_plan(
 | `enable_progressive_backtracking`   | `True`  | 失败时是否启用渐进式回溯。                        |
 | `enable_tcc_replan`                 | `False` | 是否启用 TCC Replan（高风险场景）。               |
 | `max_replan_count`                  | `3`     | 执行期间最大 Replan 次数。                        |
+| `use_tao`                           | `False` | 是否通过 TAO 受控状态循环执行步骤。                |
+| `tao_max_loops`                     | `10`    | 每步 TAO 内层循环最大轮数。                        |
+| `tao_max_time`                      | `300.0` | 每步 TAO 最大执行时间（秒）。                      |
+| `tao_supervisor_interval`           | `3`     | TAO 外层监督循环触发间隔（内层轮数）。              |
+| `tao_supervisor_interval_seconds`   | `0.0`   | TAO 异步外层监督循环间隔（秒）。                    |
 
 返回的 `OrchestratorResult` 字典字段：
 
@@ -358,6 +364,82 @@ await client.register_decision(
 # llm-extract 失败后，切换到下一个可用候选
 new_path = await client.switch_candidate_path("extract-facts")
 print(new_path["new_path"])   # regex-extract
+```
+
+### TAO 循环
+
+TAO（Think-Action-Observation）是步骤级受控状态循环。Plan 定义宏观路径，
+TAO 决定每个具体步骤如何推进并解释反馈。
+
+#### `run_tao(user_input, plan=None, candidate_actions=None, max_loops=10, max_time=300.0) -> dict`
+`POST /api/tao/run` -- 运行完整 TAO 受控状态循环。
+
+```python
+from xplan.models import ActionCandidate, ActionType
+
+result = await client.run_tao(
+    user_input="帮我优化简历中的项目经历",
+    candidate_actions=[
+        ActionCandidate(name="read_resume", type=ActionType.TOOL_CALL, description="读取简历"),
+        ActionCandidate(name="write_resume", type=ActionType.TOOL_CALL, description="输出优化后的简历"),
+    ],
+    max_loops=6,
+)
+print(result["exit_type"])    # finish / clarify / replan / interrupt
+print(result["used_loops"])
+print(result["final_output"])
+```
+
+#### `tao_think(state) -> dict`
+`POST /api/tao/think` -- 原子 Think 接口。
+
+对给定状态运行一轮 Think，产出结构化 ThinkResult（五类判断：目标、状态、路径、停止、风险）
+加循环控制器的出口决策。调用方需在多次调用间维护 TAOState。
+
+#### `tao_act(state, action_name, params=None) -> dict`
+`POST /api/tao/act` -- 原子 Action 执行接口。
+
+执行候选空间中的指定动作。非法动作和不满足前置条件的动作返回 400 错误。
+
+#### `tao_observe(state, record, expectation="") -> dict`
+`POST /api/tao/observe` -- 原子 Observation 解释接口。
+
+将 Action 原始输出解释为结构化 Observation，包含证据绑定的事实提取。
+
+#### `record_tao_evaluation_event(event) -> dict`
+`POST /api/evaluation/tao/event` -- 记录 TAO 评估事件。
+
+#### `get_tao_metrics() -> dict`
+`GET /api/evaluation/tao/metrics` -- 获取聚合的 TAO 评估指标
+（Think/Action/Observation/整体）。
+
+#### `get_tao_report() -> dict`
+`GET /api/evaluation/tao/report` -- 获取 TAO 评估报告，含指标、异常样本和优化建议。
+
+#### `annotate_tao(annotations) -> dict`
+`POST /api/evaluation/tao/annotate` -- 导入人工金标答案标注。
+
+#### `export_tao_test_set() -> dict`
+`GET /api/evaluation/tao/test-set` -- 导出 TAO 评估测试集。
+
+#### `tao_llm_judge(request) -> dict`
+`POST /api/evaluation/tao/judge` -- 对单个 TAO 轮次运行 LLM as Judge 评估。
+
+### 通过 `run_plan` 启用 TAO
+
+TAO 也可以在主编排流程中按步骤启用：
+
+```python
+from xplan.models import OrchestratorConfig
+
+config = OrchestratorConfig(
+    use_tao=True,
+    tao_max_loops=10,
+    tao_max_time=300.0,
+    tao_supervisor_interval=3,
+)
+result = await client.run_plan(user_input="...", config=config)
+# step_records 中每步会显示 tao_used=True、tao_loops、tao_exit
 ```
 
 ---

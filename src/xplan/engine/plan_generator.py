@@ -12,11 +12,15 @@ Generation flow:
 After LLM returns JSON, parse with Pydantic; retry on parse failure.
 """
 
+import asyncio
 import json
+import logging
 import re
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, TypeAdapter
+
+logger = logging.getLogger(__name__)
 
 from xplan.models import (
     Choice,
@@ -173,14 +177,8 @@ class PlanGenerator:
     ) -> Plan:
         """Generate a complete Plan.
 
-        Generates in seven steps following the G4C methodology:
-        1. Retrieve RAG standards
-        2. Generate Goal
-        3. Generate Context
-        4. Generate Choice
-        5. Generate Checkpoint
-        6. Generate Correction
-        7. Assemble Plan
+        First tries a single-shot generation for speed. If parsing fails,
+        falls back to the original 5-step generation for robustness.
 
         Args:
             user_input: User input
@@ -192,21 +190,22 @@ class PlanGenerator:
         # 1. Retrieve RAG standards
         rag_context = await self._retrieve_rag_context(user_input)
 
-        # 2. Generate Goal
+        # 2. Try fast single-shot generation
+        try:
+            return await self._generate_single_shot(
+                user_input, conversation_history, rag_context
+            )
+        except Exception as e:
+            logger.warning(
+                "Single-shot plan generation failed (%s), falling back to step-by-step generation",
+                type(e).__name__,
+            )
+
+        # 3. Fallback to original step-by-step generation
         goal = await self.generate_goal(user_input, rag_context)
-
-        # 3. Generate Context (no preset constraints during generation; LLM extracts from conversation history)
-        context = await self.generate_context(
-            conversation_history, Constraints()
-        )
-
-        # 4. Generate Choice
+        context = await self.generate_context(conversation_history, Constraints())
         choice = await self.generate_choice(goal, context)
-
-        # 5. Generate Checkpoint
         checkpoints = await self.generate_checkpoints(choice.steps)
-
-        # 6. Generate Correction
         plan_dict = {
             "goal": goal.model_dump(),
             "context": context.model_dump(),
@@ -215,8 +214,7 @@ class PlanGenerator:
         }
         corrections = await self.generate_corrections(plan_dict, rag_context)
 
-        # 7. Assemble Plan
-        plan = Plan(
+        return Plan(
             goal=goal,
             context=context,
             choice=choice,
@@ -224,7 +222,51 @@ class PlanGenerator:
             correction=corrections,
             status=PlanStatus.READY,
         )
-        return plan
+
+    async def _generate_single_shot(
+        self, user_input: str, conversation_history: str, rag_context: str
+    ) -> Plan:
+        """Generate a complete Plan in a single LLM call.
+
+        This is much faster than the step-by-step approach because it avoids
+        5 sequential round-trips to the LLM.
+        """
+        schema = Plan.model_json_schema()
+        system_prompt = f"""You are the XPlan engine. Generate a complete G4C Plan as a single JSON object.
+
+The Plan must contain exactly these top-level fields:
+- goal: with user_goal, success_criteria (list), adjective_standards (object)
+- context: with known_facts (list), missing_info (list), constraints {{hard, soft}}
+- choice: with selected_path, reason (evidence-based), candidate_paths (list), steps (list of {{id, objective, reason}})
+- checkpoint: list of {{step_id, checks (list of strings)}}
+- correction: list of {{condition, action: {{type, message}}}}
+
+Rules:
+1. Output ONLY valid JSON, no markdown, no explanation.
+2. The reason in choice must reference facts or constraints from context.
+3. success_criteria must be verifiable.
+4. Keep steps concise (3-5 steps is enough).
+5. adjective_standards maps adjectives to their acceptance criteria.
+
+JSON Schema:
+{json.dumps(schema, ensure_ascii=False, indent=2)}
+"""
+        user_prompt = f"""User request: {user_input}
+
+Conversation history: {conversation_history or '(none)'}
+
+Additional context: {rag_context or '(none)'}
+
+Generate the complete Plan JSON now."""
+
+        response = await self.llm_service.chat(system_prompt, user_prompt)
+        data = _extract_json(response)
+
+        # The LLM may wrap the Plan in a 'plan' key
+        if isinstance(data, dict) and "plan" in data:
+            data = data["plan"]
+
+        return Plan.model_validate(data)
 
     async def generate_goal(
         self, user_input: str, rag_context: str

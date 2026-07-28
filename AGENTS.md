@@ -229,6 +229,10 @@ All routes are prefixed with `/api`. `POST /api/plan/run` is the **primary entry
 | GET | `/api/evaluation/replan/test-set` | Export Replan evaluation test set |
 | GET | `/api/metrics` | Get online monitoring metrics |
 | POST | `/api/dag/validate` | Validate DAG structure (cycle detection + topological sort) |
+| POST | `/api/tao/run` | Run the full TAO (Think-Action-Observation) controlled state loop |
+| POST | `/api/tao/think` | Atomic TAO Think (five structured judgments + exit decision) |
+| POST | `/api/tao/act` | Atomic TAO Action execution (candidate space enforced) |
+| POST | `/api/tao/observe` | Atomic TAO Observation interpretation (evidence-bound facts) |
 
 ## Python SDK
 

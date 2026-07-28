@@ -12,6 +12,7 @@ from xplan.services.candidate_path_manager import CandidatePathManager
 from xplan.services.constraint_manager import ConstraintManager
 from xplan.services.llm_service import LLMService
 from xplan.services.rag_service import RAGService
+from xplan.services.tao_state_manager import TAOStateManager
 from xplan.services.trust_state_manager import TrustStateManager
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "ConstraintManager",
     "TrustStateManager",
     "CandidatePathManager",
+    "TAOStateManager",
 ]

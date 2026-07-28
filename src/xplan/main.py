@@ -18,8 +18,9 @@ from xplan.services import (
     ConstraintManager,
     TrustStateManager,
     CandidatePathManager,
+    TAOStateManager,
 )
-from xplan.evaluation import PlanMetrics, UserCorrectionDetector, ReplanEvaluator
+from xplan.evaluation import PlanMetrics, UserCorrectionDetector, ReplanEvaluator, TAOEvaluator
 from xplan.engine import (
     ReplanEngine,
     TCCReplan,
@@ -28,6 +29,7 @@ from xplan.engine import (
     BacktrackingEngine,
     CrossTurnTracker,
     PlanOrchestrator,
+    TAOEngine,
 )
 
 load_dotenv()
@@ -50,6 +52,8 @@ class AppState:
     backtracking_engine: BacktrackingEngine
     cross_turn_tracker: CrossTurnTracker
     failure_tracer: FailureTracer
+    tao_engine: TAOEngine
+    tao_evaluator: TAOEvaluator
     orchestrator: PlanOrchestrator
 
 
@@ -94,6 +98,15 @@ def _create_state() -> AppState:
         llm_service=llm,
         dag_validator=DAGValidator(),
     )
+    tao_engine = TAOEngine(
+        llm_service=llm,
+        replan_engine=replan_engine,
+        constraint_manager=cm,
+        state_manager=TAOStateManager(trust_state_manager),
+        supervisor_interval=int(os.getenv("TAO_SUPERVISOR_INTERVAL", "3")),
+        supervisor_interval_seconds=float(os.getenv("TAO_SUPERVISOR_INTERVAL_SECONDS", "0.0")),
+    )
+    tao_evaluator = TAOEvaluator(llm_service=llm)
     orchestrator = PlanOrchestrator(
         llm_service=llm,
         rag_service=rag,
@@ -105,6 +118,7 @@ def _create_state() -> AppState:
         trust_state_manager=trust_state_manager,
         candidate_path_manager=candidate_path_manager,
         replan_evaluator=replan_evaluator,
+        tao_engine=tao_engine,
     )
     return AppState(
         llm,
@@ -120,6 +134,8 @@ def _create_state() -> AppState:
         backtracking_engine,
         cross_turn_tracker,
         failure_tracer,
+        tao_engine,
+        tao_evaluator,
         orchestrator,
     )
 

@@ -49,6 +49,16 @@ from xplan.prompts.tcc_prompt import (
     build_tcc_try_system_prompt,
     build_tcc_try_user_prompt,
 )
+from xplan.prompts.tao_prompt import (
+    build_exit_rules_text,
+    build_boundary_rules_text,
+    build_tao_observation_system_prompt,
+    build_tao_observation_user_prompt,
+    build_tao_supervisor_system_prompt,
+    build_tao_supervisor_user_prompt,
+    build_tao_think_system_prompt,
+    build_tao_think_user_prompt,
+)
 from xplan.prompts.tracing_prompt import (
     build_tracing_system_prompt,
     build_tracing_user_prompt,
@@ -89,4 +99,13 @@ __all__ = [
     # Failure backtracking and root cause localization
     "build_tracing_system_prompt",
     "build_tracing_user_prompt",
+    # TAO / ReAct
+    "build_boundary_rules_text",
+    "build_exit_rules_text",
+    "build_tao_think_system_prompt",
+    "build_tao_think_user_prompt",
+    "build_tao_observation_system_prompt",
+    "build_tao_observation_user_prompt",
+    "build_tao_supervisor_system_prompt",
+    "build_tao_supervisor_user_prompt",
 ]

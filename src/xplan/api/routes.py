@@ -18,8 +18,14 @@ Provides REST API for the G4C Plan mechanism:
 - GET /api/evaluation/replan/test-set - Export test set
 - GET /api/metrics - Get online monitoring metrics
 - GET /api/dag/validate - Validate DAG structure
+- POST /api/tao/run - Run the full TAO (Think-Action-Observation) loop
+- POST /api/tao/think - Atomic TAO Think (five structured judgments + exit decision)
+- POST /api/tao/act - Atomic TAO Action execution
+- POST /api/tao/observe - Atomic TAO Observation interpretation
 - GET /health - Health check
 """
+
+from typing import Any
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
@@ -45,6 +51,19 @@ from xplan.models import (
     StepRecord,
     OrchestratorConfig,
     OrchestratorResult,
+    ActionCandidate,
+    ActionRecord,
+    Observation,
+    TAOExitRecord,
+    TAOResult,
+    TAOState,
+    ThinkResult,
+    TAOEvaluationEvent,
+    TAOEvaluationMetrics,
+    TAOEvaluationReport,
+    GoldenAnswer,
+    LLMJudgeRequest,
+    LLMJudgeResult,
 )
 from xplan.engine import (
     PlanGenerator,
@@ -59,7 +78,9 @@ from xplan.engine import (
     CrossTurnTracker,
     FailureTracer,
     PlanOrchestrator,
+    TAOEngine,
 )
+from xplan.engine.tao_action_runtime import IllegalActionError, PreconditionError
 from xplan.services import (
     LLMService,
     RAGService,
@@ -72,6 +93,7 @@ from xplan.evaluation import (
     OfflineAnalyzer,
     UserCorrectionDetector,
     ReplanEvaluator,
+    TAOEvaluator,
 )
 
 router = APIRouter(prefix="/api", tags=["xplan"])
@@ -188,6 +210,26 @@ class AnnotateReplanRequest(BaseModel):
     )
 
 
+class RecordTAOEvaluationEventRequest(BaseModel):
+    """Record TAO evaluation event request."""
+
+    event: TAOEvaluationEvent = Field(description="TAO evaluation event")
+
+
+class AnnotateTAORequest(BaseModel):
+    """Import TAO golden-answer annotations request."""
+
+    annotations: list[GoldenAnswer] = Field(
+        description="List of golden answers keyed by event_id"
+    )
+
+
+class TAOJudgeRequest(BaseModel):
+    """TAO LLM-as-judge request."""
+
+    request: LLMJudgeRequest = Field(description="Judge request for a TAO round")
+
+
 class AddFactRequest(BaseModel):
     """Add fact entry request."""
 
@@ -293,6 +335,67 @@ class RunPlanRequest(BaseModel):
     )
 
 
+class TAORunRequest(BaseModel):
+    """Run the full TAO loop request.
+
+    TAO (Think-Action-Observation) is a controlled state loop for step-level
+    execution: the Plan defines the macro path, while TAO decides how each
+    concrete step moves forward and interprets feedback.
+    """
+
+    user_input: str = Field(description="User's goal or request")
+    plan: Plan | None = Field(
+        default=None, description="Optional G4C Plan providing goal/context anchoring"
+    )
+    candidate_actions: list[ActionCandidate] = Field(
+        default_factory=list,
+        description="Full candidate action space (coarse-filtered inside the engine)",
+    )
+    max_loops: int = Field(default=10, description="Maximum TAO inner loop rounds")
+    max_time: float = Field(default=300.0, description="Maximum execution time in seconds")
+
+
+class TAOThinkRequest(BaseModel):
+    """Atomic TAO Think request."""
+
+    state: TAOState = Field(description="Current TAO state")
+
+
+class TAOThinkResponse(BaseModel):
+    """Atomic TAO Think response."""
+
+    think: ThinkResult = Field(description="Structured Think result (five judgments)")
+    exit: TAOExitRecord = Field(description="Exit decision for this round")
+
+
+class TAOActRequest(BaseModel):
+    """Atomic TAO Action execution request."""
+
+    state: TAOState = Field(description="Current TAO state (carries the candidate space)")
+    action_name: str = Field(description="Selected action name (must be in the candidate space)")
+    params: dict[str, Any] = Field(default_factory=dict, description="Action parameters")
+
+
+class TAOActResponse(BaseModel):
+    """Atomic TAO Action execution response."""
+
+    record: ActionRecord = Field(description="Executed action record")
+
+
+class TAOObserveRequest(BaseModel):
+    """Atomic TAO Observation interpretation request."""
+
+    state: TAOState = Field(description="Current TAO state")
+    record: ActionRecord = Field(description="Action record to interpret")
+    expectation: str = Field(default="", description="Optional expectation for the output")
+
+
+class TAOObserveResponse(BaseModel):
+    """Atomic TAO Observation interpretation response."""
+
+    observation: Observation = Field(description="Structured interpretation of the raw output")
+
+
 # ── Dependency injection ───────────────────────────────────
 
 
@@ -378,6 +481,20 @@ def get_orchestrator() -> PlanOrchestrator:
     from xplan.main import app_state
 
     return app_state.orchestrator
+
+
+def get_tao_engine() -> TAOEngine:
+    """Get TAO engine instance."""
+    from xplan.main import app_state
+
+    return app_state.tao_engine
+
+
+def get_tao_evaluator() -> TAOEvaluator:
+    """Get TAO evaluator instance."""
+    from xplan.main import app_state
+
+    return app_state.tao_evaluator
 
 
 # ── Routes ─────────────────────────────────────────────────
@@ -689,6 +806,78 @@ async def export_replan_test_set(
     return {"test_set": test_set, "total": len(test_set)}
 
 
+@router.post("/evaluation/tao/event")
+async def record_tao_evaluation_event(
+    req: RecordTAOEvaluationEventRequest,
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Record a TAO evaluation event.
+
+    Stores Think / Action / Observation round data for subsequent metric
+    computation and report generation.
+    """
+    evaluator.record_event(req.event)
+    return {
+        "success": True,
+        "event_id": req.event.event_id,
+        "total_events": len(evaluator.get_events()),
+    }
+
+
+@router.get("/evaluation/tao/metrics")
+async def get_tao_metrics(
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Get aggregated TAO evaluation metrics (Think/Action/Observation/Overall)."""
+    return evaluator.get_metrics()
+
+
+@router.get("/evaluation/tao/report")
+async def get_tao_report(
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Get TAO evaluation report with metrics, abnormal samples and suggestions."""
+    return evaluator.generate_report()
+
+
+@router.post("/evaluation/tao/annotate")
+async def annotate_tao(
+    req: AnnotateTAORequest,
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Import human golden-answer annotations for TAO evaluation.
+
+    Annotations are matched to events by event_id and used to compute
+    accuracy metrics such as action selection and fact extraction.
+    """
+    count = evaluator.import_golden_answers(
+        [a.model_dump(mode="json") for a in req.annotations]
+    )
+    return {"success": True, "annotated_count": count}
+
+
+@router.get("/evaluation/tao/test-set")
+async def export_tao_test_set(
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Export TAO evaluation test set for human annotation.
+
+    Returns event metadata with golden-answer fields left empty.
+    """
+    test_set = evaluator.export_test_set()
+    return {"test_set": test_set, "total": len(test_set)}
+
+
+@router.post("/evaluation/tao/judge")
+async def tao_llm_judge(
+    req: TAOJudgeRequest,
+    evaluator: TAOEvaluator = Depends(get_tao_evaluator),
+):
+    """Run LLM-as-judge on a single TAO round."""
+    result = await evaluator.llm_judge(req.request)
+    return {"result": result}
+
+
 @router.get("/metrics")
 async def get_metrics(
     metrics: PlanMetrics = Depends(get_plan_metrics),
@@ -921,3 +1110,99 @@ async def get_failed_paths(
     Returns all failed path records, including failure reasons and recovery status.
     """
     return {"failed_paths": cpm.get_failed_paths()}
+
+
+# ── TAO (Think-Action-Observation) loop ────────────────────
+
+
+@router.post("/tao/run")
+async def tao_run(
+    req: TAORunRequest,
+    tao: TAOEngine = Depends(get_tao_engine),
+):
+    """Run the full TAO (Think-Action-Observation) controlled state loop.
+
+    The TAO loop drives step-level execution through five runtime states
+    (Goal / Action / Observation / Fact / Control):
+    1. **Think**: Five structured judgments (goal, state, path, stop, risk)
+    2. **Action**: Execute the selected candidate action (with retry control)
+    3. **Observation**: Interpret the raw output, extract evidence-bound facts
+    4. **Exit decision**: continue / finish / clarify / retry / replan / interrupt
+    5. **Outer supervisor loop** (optional): checks goal drift, constraint
+       violations and stagnation every N inner rounds
+
+    Control State prevents runaway execution via `max_loops` and `max_time`.
+    Returns a TAOResult with the final exit, output and full exit history.
+    """
+    result: TAOResult = await tao.run(
+        user_input=req.user_input,
+        plan=req.plan,
+        candidate_actions=req.candidate_actions,
+        max_loops=req.max_loops,
+        max_time=req.max_time,
+    )
+    return result
+
+
+@router.post("/tao/think")
+async def tao_think(
+    req: TAOThinkRequest,
+    tao: TAOEngine = Depends(get_tao_engine),
+):
+    """Atomic TAO Think: run one Think round on the given state.
+
+    Produces a structured ThinkResult (five judgments: goal, state, path,
+    stop, risk) plus the loop controller's exit decision. The caller is
+    responsible for carrying the TAOState between calls.
+    """
+    think = await tao.think_engine.think(req.state)
+    exit_record = tao.loop_controller.decide(req.state, think)
+    return TAOThinkResponse(think=think, exit=exit_record)
+
+
+@router.post("/tao/act")
+async def tao_act(
+    req: TAOActRequest,
+    tao: TAOEngine = Depends(get_tao_engine),
+):
+    """Atomic TAO Action execution.
+
+    Executes the named action from the candidate space carried in the state.
+    Illegal actions (outside the candidate space) and unsatisfied hard
+    preconditions are rejected with a 400 error.
+    """
+    candidate = next(
+        (c for c in req.state.candidate_actions if c.name == req.action_name),
+        None,
+    )
+    if candidate is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Action '{req.action_name}' is not in the candidate space "
+                f"{sorted(c.name for c in req.state.candidate_actions)}"
+            ),
+        )
+    try:
+        record = await tao.action_runtime.execute(candidate, req.params, req.state)
+    except (IllegalActionError, PreconditionError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return TAOActResponse(record=record)
+
+
+@router.post("/tao/observe")
+async def tao_observe(
+    req: TAOObserveRequest,
+    tao: TAOEngine = Depends(get_tao_engine),
+):
+    """Atomic TAO Observation interpretation.
+
+    Interprets an action's raw output into a structured Observation:
+    code performs field/format checks, the LLM performs semantic
+    interpretation (fact extraction, evidence binding, gap identification).
+    Note: HTTP 200 != real success; empty data and anomalies are detected.
+    """
+    observation = await tao.observation_interpreter.interpret(
+        req.state, req.record, req.expectation
+    )
+    return TAOObserveResponse(observation=observation)

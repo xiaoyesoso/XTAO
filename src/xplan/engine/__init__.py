@@ -27,6 +27,11 @@ from xplan.engine.plan_verifier import (
 from xplan.engine.replan_engine import ReplanEngine
 from xplan.engine.tcc_replan import TCCReplan
 from xplan.engine.orchestrator import PlanOrchestrator
+from xplan.engine.tao_action_runtime import TAOActionRuntime
+from xplan.engine.tao_engine import TAOEngine
+from xplan.engine.tao_loop_controller import TAOLoopController
+from xplan.engine.tao_observation_interpreter import TAOObservationInterpreter
+from xplan.engine.tao_think_engine import TAOThinkEngine
 
 __all__ = [
     "PlanGenerator",
@@ -42,4 +47,10 @@ __all__ = [
     "CrossTurnTracker",
     "FailureTracer",
     "PlanOrchestrator",
+    # TAO / ReAct
+    "TAOEngine",
+    "TAOThinkEngine",
+    "TAOActionRuntime",
+    "TAOObservationInterpreter",
+    "TAOLoopController",
 ]

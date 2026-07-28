@@ -21,6 +21,11 @@ class OrchestratorConfig(BaseModel):
     enable_progressive_backtracking: bool = Field(default=True, description="Enable progressive backtracking on failure")
     enable_tcc_replan: bool = Field(default=False, description="Enable TCC Replan for high-risk scenarios")
     max_replan_count: int = Field(default=3, description="Max replan attempts during execution")
+    use_tao: bool = Field(default=False, description="Execute steps via the TAO (Think-Action-Observation) controlled state loop")
+    tao_max_loops: int = Field(default=10, description="Max TAO inner loop rounds per step")
+    tao_max_time: float = Field(default=300.0, description="Max TAO execution time per step in seconds")
+    tao_supervisor_interval: int = Field(default=3, description="Trigger the TAO outer supervisor loop every N inner rounds (0 disables)")
+    tao_supervisor_interval_seconds: float = Field(default=0.0, description="Trigger the TAO outer supervisor loop asynchronously every N seconds (0 disables)")
 
 
 class StepExecutionRecord(BaseModel):
@@ -37,6 +42,9 @@ class StepExecutionRecord(BaseModel):
     root_cause_step_id: str | None = Field(default=None, description="Root cause step ID (if traced)")
     backtracking_level: str | None = Field(default=None, description="Backtracking level used: action/step/stage/global")
     replan_triggered: bool = Field(default=False, description="Whether replan was triggered at this step")
+    tao_used: bool = Field(default=False, description="Whether this step was executed via the TAO loop")
+    tao_loops: int = Field(default=0, description="TAO loop rounds used for this step")
+    tao_exit: str | None = Field(default=None, description="TAO final exit: finish/clarify/retry/replan/interrupt")
 
 
 class OrchestratorResult(BaseModel):

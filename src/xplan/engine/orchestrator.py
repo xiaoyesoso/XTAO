@@ -78,6 +78,7 @@ class PlanOrchestrator:
         trust_state_manager: Any = None,
         candidate_path_manager: Any = None,
         replan_evaluator: Any = None,
+        tao_engine: Any = None,
     ):
         """Initialize the orchestrator with all subsystem dependencies.
 
@@ -92,6 +93,7 @@ class PlanOrchestrator:
             trust_state_manager: Trust state manager for intermediate results
             candidate_path_manager: Candidate path manager for path switching
             replan_evaluator: Replan evaluator for effectiveness metrics
+            tao_engine: TAO engine for step-level state-loop execution (optional)
         """
         self.llm_service = llm_service
         self.constraint_manager = constraint_manager
@@ -102,6 +104,7 @@ class PlanOrchestrator:
         self.trust_state_manager = trust_state_manager
         self.candidate_path_manager = candidate_path_manager
         self.replan_evaluator = replan_evaluator
+        self.tao_engine = tao_engine
 
         # Create internal engine instances (with shared LLM service)
         self.plan_generator = PlanGenerator(llm_service, rag_service)
@@ -177,16 +180,24 @@ class PlanOrchestrator:
         # ── Phase 4: Build result ───────────────────────────────
         duration_ms = int((time.time() - start_time) * 1000)
 
-        # Determine final status
+        # Determine final status and extract clarify message from step records
+        clarify_message: str | None = None
         if plan.status == PlanStatus.COMPLETED:
             final_status = "completed"
         elif plan.status == PlanStatus.ABORTED:
             final_status = "aborted"
         elif plan.status == PlanStatus.FAILED:
-            # Check if it's a clarify situation
             final_status = "failed"
         else:
             final_status = "failed"
+
+        # Extract clarify message from the first clarify-type step record
+        if final_status == "failed" and step_records:
+            for rec in step_records:
+                if rec.correction_applied == "clarify" and rec.output:
+                    clarify_message = rec.output
+                    final_status = "clarify_needed"
+                    break
 
         result = OrchestratorResult(
             plan=plan,
@@ -197,6 +208,7 @@ class PlanOrchestrator:
             verification_score=verification_score,
             verification_passed=verification_passed,
             errors=errors,
+            clarify_message=clarify_message,
         )
 
         logger.info(
@@ -269,9 +281,16 @@ class PlanOrchestrator:
                 status="running",
             )
 
-            # Execute step
+            # Execute step (via TAO loop when enabled)
+            tao_result = None
             try:
-                output = await self.plan_executor.execute_step(step, plan)
+                if config.use_tao and self.tao_engine is not None:
+                    record.tao_used = True
+                    output, tao_result = await self._execute_step_via_tao(step, plan, config)
+                    record.tao_loops = tao_result.used_loops
+                    record.tao_exit = tao_result.exit_type.value
+                else:
+                    output = await self.plan_executor.execute_step(step, plan)
                 record.output = output[:500]  # Truncate for storage
             except Exception as e:
                 errors.append(f"Step {step.id} execution error: {e}")
@@ -291,6 +310,56 @@ class PlanOrchestrator:
                     i = 0
                     continue
                 else:
+                    plan.status = PlanStatus.FAILED
+                    return plan, step_records, replan_count
+
+            # ── TAO exit handling (task 9.5) ──────────────────
+            if tao_result is not None:
+                from xplan.models.tao import TAOExit
+
+                if tao_result.exit_type == TAOExit.REPLAN:
+                    # TAO found the need to replan; delegate to ReplanEngine
+                    previous_count = replan_count
+                    plan, replan_count = await self._handle_failure(
+                        plan, step, record,
+                        tao_result.exit_reason or "TAO requested replan",
+                        config, errors, replan_count,
+                    )
+                    if replan_count > previous_count:
+                        record.replan_triggered = True
+                    if plan.status in (PlanStatus.ABORTED, PlanStatus.FAILED):
+                        step_records.append(record)
+                        return plan, step_records, replan_count
+                    step.status = "done"
+                    record.status = "done"
+                    step_records.append(record)
+                    i = 0
+                    continue
+
+                if tao_result.exit_type == TAOExit.CLARIFY:
+                    # Map to the clarify correction strategy
+                    plan.status = PlanStatus.FAILED
+                    record.status = "failed"
+                    record.correction_applied = "clarify"
+                    record.output = tao_result.clarify_message[:500]
+                    errors.append(f"Step {step.id} needs clarification: {tao_result.clarify_message[:200]}")
+                    step_records.append(record)
+                    return plan, step_records, replan_count
+
+                if tao_result.exit_type == TAOExit.INTERRUPT:
+                    record.status = "failed"
+                    step.status = "failed"
+                    step_records.append(record)
+                    if replan_count < max_replans:
+                        plan, replan_count = await self._handle_failure(
+                            plan, step, record,
+                            tao_result.exit_reason or "TAO interrupted",
+                            config, errors, replan_count,
+                        )
+                        if plan.status in (PlanStatus.ABORTED, PlanStatus.FAILED):
+                            return plan, step_records, replan_count
+                        i = 0
+                        continue
                     plan.status = PlanStatus.FAILED
                     return plan, step_records, replan_count
 
@@ -423,6 +492,96 @@ class PlanOrchestrator:
         plan.status = PlanStatus.COMPLETED
         plan.current_step_index = len(plan.choice.steps) - 1
         return plan, step_records, replan_count
+
+    async def _execute_step_via_tao(
+        self,
+        step: Any,
+        plan: Plan,
+        config: OrchestratorConfig,
+    ) -> tuple[str, Any]:
+        """Execute a Plan step via the TAO controlled state loop.
+
+        The Plan step objective becomes the TAO current goal; a default
+        candidate space is built around an `execute_step` action whose executor
+        delegates to the standard PlanExecutor logic.
+
+        Args:
+            step: Plan step to execute
+            plan: Current Plan
+            config: Orchestrator configuration with TAO settings
+
+        Returns:
+            Tuple of (step output text, TAOResult)
+        """
+        from xplan.models.tao import ActionCandidate, ActionType, TAOExit
+        from xplan.engine.tao_action_runtime import TAOActionRuntime
+
+        async def _execute_step(params: dict) -> str:
+            return await self.plan_executor.execute_step(step, plan)
+
+        # Create a fresh runtime per step to avoid executor name collisions
+        # across steps and to keep preconditions isolated.
+        runtime = TAOActionRuntime()
+        runtime.register_executor("execute_step", _execute_step)
+        # Copy user interaction handler from the shared engine runtime so
+        # ask_user works when a handler is registered on the engine.
+        if self.tao_engine.action_runtime._user_handler is not None:
+            runtime.register_user_interaction_handler(
+                self.tao_engine.action_runtime._user_handler
+            )
+
+        candidates = [
+            ActionCandidate(
+                name="execute_step",
+                type=ActionType.TOOL_CALL,
+                description=f"Execute plan step '{step.id}': {step.objective}",
+                rollbackable=True,
+            ),
+        ]
+        # Only offer ask_user when an interaction handler is registered
+        if runtime._user_handler is not None:
+            candidates.append(
+                ActionCandidate(
+                    name="ask_user",
+                    type=ActionType.USER_INTERACTION,
+                    description="Ask the user for missing information",
+                    rollbackable=True,
+                )
+            )
+
+        # Create a per-step TAOEngine that uses the fresh runtime so executor
+        # registrations do not leak across steps.
+        from xplan.engine.tao_engine import TAOEngine
+        step_engine = TAOEngine(
+            llm_service=self.tao_engine.llm_service,
+            think_engine=self.tao_engine.think_engine,
+            action_runtime=runtime,
+            observation_interpreter=self.tao_engine.observation_interpreter,
+            state_manager=self.tao_engine.state_manager,
+            loop_controller=self.tao_engine.loop_controller,
+            replan_engine=self.tao_engine.replan_engine,
+            constraint_manager=self.tao_engine.constraint_manager,
+            supervisor_interval=0,  # per-step supervisor handled by orchestrator
+            supervisor_interval_seconds=0,
+        )
+        tao_result = await step_engine.run(
+            user_input=step.objective,
+            plan=plan,
+            candidate_actions=candidates,
+            max_loops=config.tao_max_loops,
+            max_time=config.tao_max_time,
+        )
+
+        if tao_result.exit_type == TAOExit.FINISH:
+            output = tao_result.final_output
+        else:
+            # Surface the exit reason as output for upstream handling
+            last_action = tao_result.state.last_action() if tao_result.state else None
+            if last_action is not None and last_action.output is not None:
+                output = str(last_action.output)
+            else:
+                output = tao_result.exit_reason
+        return output, tao_result
 
     async def _execute_correction(
         self,

@@ -27,6 +27,7 @@ XPlan 是基于 G4C 方法论（Goal、Context、Choice、Checkpoint、Correctio
 | 候选路径 | 3 | 决策节点注册、路径切换、失败路径查询 |
 | 评估 | 6 | 离线分析、Replan 事件记录与指标评估 |
 | DAG | 1 | DAG 结构验证 |
+| TAO | 4 | TAO 受控状态循环（完整循环 + Think/Act/Observe 原子接口） |
 
 ### 主入口
 
@@ -140,6 +141,11 @@ curl -X GET http://localhost:8000/api/metrics
 | `enable_progressive_backtracking` | boolean | `true` | 失败时是否启用渐进式回溯 |
 | `enable_tcc_replan` | boolean | `false` | 是否启用 TCC Replan（高风险场景） |
 | `max_replan_count` | integer | `3` | 执行期间最大 Replan 次数 |
+| `use_tao` | boolean | `false` | 是否通过 TAO（Think-Action-Observation）受控状态循环执行每个 Plan 步骤 |
+| `tao_max_loops` | integer | `10` | 每步 TAO 内层循环最大轮数 |
+| `tao_max_time` | float | `300.0` | 每步 TAO 最大执行时间（秒） |
+| `tao_supervisor_interval` | integer | `3` | 每 N 轮内层循环触发一次 TAO 外层监督循环（`0` 表示关闭） |
+| `tao_supervisor_interval_seconds` | float | `0.0` | 每 N 秒异步触发一次 TAO 外层监督循环（`0` 表示关闭） |
 
 **响应体**（OrchestratorResult）：
 
@@ -2159,6 +2165,347 @@ curl -X POST http://localhost:8000/api/dag/validate \
 
 ---
 
+### 2.9 TAO（Think-Action-Observation）
+
+TAO 是面向步骤级执行的受控状态循环：Plan 定义宏观路径，TAO 决定每个具体步骤如何推进、如何解释反馈。TAO 维护五类运行时状态 —— **Goal / Action / Observation / Fact / Control** —— 每轮必须且只能走向一种出口：`continue` / `finish` / `clarify` / `retry` / `replan` / `interrupt`。
+
+每轮执行流程：**Think**（五类结构化判断：目标、状态、路径、停止、风险）→ **Action**（执行候选空间中选中的动作）→ **Observation**（解释原始输出、提取绑定证据的事实）→ **状态更新** → **出口决策**。可选的外层监督循环每 N 轮内层循环检查一次目标漂移、约束违反与进展停滞。Control State 通过 `max_loops` / `max_time` 防止循环失控。
+
+TAO 也可以通过主编排流程按步骤启用：设置 `OrchestratorConfig.use_tao=true`（见 [2.2.1 主编排入口](#221-主编排入口运行完整-g4c-生命周期)）。
+
+#### 2.9.1 运行完整 TAO 循环
+
+- **方法与路径**：`POST /api/tao/run`
+- **描述**：运行完整 TAO 循环，直到取到 continue/retry 之外的出口。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|---|---|---|---|---|
+| `user_input` | string | 是 | — | 用户目标或请求 |
+| `plan` | Plan \| null | 否 | `null` | 可选 G4C Plan，提供目标/上下文锚定 |
+| `candidate_actions` | list[ActionCandidate] | 否 | `[]` | 完整候选动作空间（引擎内部进行粗筛） |
+| `max_loops` | integer | 否 | `10` | TAO 内层循环最大轮数 |
+| `max_time` | float | 否 | `300.0` | 最大执行时间（秒） |
+
+**响应体**（TAOResult）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `exit_type` | string | 最终出口：`finish` / `clarify` / `replan` / `interrupt` |
+| `final_output` | string | 最终输出文本（`exit_type == "finish"` 时） |
+| `clarify_message` | string | 向用户提问的澄清消息（`exit_type == "clarify"` 时） |
+| `exit_reason` | string | 出口原因详情 |
+| `used_loops` | integer | 实际使用的循环轮数 |
+| `total_actions` | integer | 执行的动作总数 |
+| `exit_history` | list[TAOExitRecord] | 每轮的出口决策记录 |
+| `state` | TAOState \| null | 最终 TAO 状态快照 |
+
+**curl 示例**：
+
+```bash
+curl -X POST http://localhost:8000/api/tao/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_input": "总结 Q3 销售报告",
+    "candidate_actions": [
+      {
+        "name": "read_report",
+        "type": "tool_call",
+        "description": "读取销售报告文件",
+        "params_schema": {"path": "报告文件路径"}
+      },
+      {
+        "name": "ask_user",
+        "type": "user_interaction",
+        "description": "向用户询问缺失信息"
+      }
+    ],
+    "max_loops": 10,
+    "max_time": 300.0
+  }'
+```
+
+**响应示例**：
+
+```json
+{
+  "exit_type": "finish",
+  "final_output": "Q3 销售额环比增长 12%，主要由 ...",
+  "clarify_message": "",
+  "exit_reason": "成功标准已满足",
+  "used_loops": 3,
+  "total_actions": 3,
+  "exit_history": [
+    {"exit_type": "continue", "reason": "...", "used_loops": 1},
+    {"exit_type": "finish", "reason": "成功标准已满足", "used_loops": 3}
+  ],
+  "state": { "goal_state": {"final_goal": "..."}, "facts": {}, "control": {"used_loops": 3} }
+}
+```
+
+---
+
+#### 2.9.2 原子 Think 接口
+
+- **方法与路径**：`POST /api/tao/think`
+- **描述**：对给定状态执行一轮 Think，输出结构化 ThinkResult（五类判断）与本轮出口决策。调用方负责在多次调用间携带 TAOState（客户端有状态、服务端无状态）。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `state` | TAOState | 是 | 当前 TAO 状态 |
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `think` | ThinkResult | 结构化 Think 结果（五类判断） |
+| `exit` | TAOExitRecord | 本轮出口决策 |
+
+**curl 示例**：
+
+```bash
+curl -X POST http://localhost:8000/api/tao/think \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {
+      "goal_state": {"final_goal": "总结 Q3 销售报告", "current_goal": "读取报告"},
+      "candidate_actions": [{"name": "read_report", "type": "tool_call"}],
+      "control": {"max_loops": 10, "used_loops": 0}
+    }
+  }'
+```
+
+**响应示例**：
+
+```json
+{
+  "think": {
+    "current_goal": "读取报告",
+    "facts_sufficient": false,
+    "selected_action": "read_report",
+    "action_params": {"path": "q3-sales.md"},
+    "should_stop": false,
+    "exit_decision": "continue",
+    "reason": "总结前必须先获取报告内容",
+    "risk_level": "low"
+  },
+  "exit": {"exit_type": "continue", "reason": "...", "used_loops": 0, "overridden": false}
+}
+```
+
+---
+
+#### 2.9.3 原子 Action 执行接口
+
+- **方法与路径**：`POST /api/tao/act`
+- **描述**：执行状态中候选空间内指定名称的动作。非法动作（不在候选空间内）与未满足的硬前置条件会被拒绝并返回 `400` 错误。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `state` | TAOState | 是 | 当前 TAO 状态（携带候选动作空间） |
+| `action_name` | string | 是 | 选中的动作名称（必须在候选空间内） |
+| `params` | object | 否 | 动作参数，默认 `{}` |
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `record` | ActionRecord | 已执行的动作记录（状态为 `done` 或 `failed`） |
+
+**curl 示例**：
+
+```bash
+curl -X POST http://localhost:8000/api/tao/act \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {"candidate_actions": [{"name": "read_report", "type": "tool_call"}]},
+    "action_name": "read_report",
+    "params": {"path": "q3-sales.md"}
+  }'
+```
+
+**响应示例**：
+
+```json
+{
+  "record": {
+    "action_id": "act-1a2b3c4d",
+    "name": "read_report",
+    "type": "tool_call",
+    "input": {"path": "q3-sales.md"},
+    "output": "Q3 销售额环比增长 12% ...",
+    "status": "done",
+    "retry_count": 0
+  }
+}
+```
+
+---
+
+#### 2.9.4 原子 Observation 解释接口
+
+- **方法与路径**：`POST /api/tao/observe`
+- **描述**：将动作的原始输出解释为结构化 Observation：代码层执行字段/格式检查，大模型层执行语义解释（事实提取、证据绑定、信息缺口识别）。注意：HTTP 200 ≠ 真实成功 —— 空数据、权限不足与异常情况均会被识别。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `state` | TAOState | 是 | 当前 TAO 状态 |
+| `record` | ActionRecord | 是 | 待解释的动作记录 |
+| `expectation` | string | 否 | 对输出的预期描述（可选） |
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `observation` | Observation | 结构化解释结果 |
+
+**curl 示例**：
+
+```bash
+curl -X POST http://localhost:8000/api/tao/observe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "state": {"goal_state": {"final_goal": "总结 Q3 销售报告"}},
+    "record": {"action_id": "act-1a2b3c4d", "name": "read_report", "output": "Q3 销售额环比增长 12% ...", "status": "done"}
+  }'
+```
+
+**响应示例**：
+
+```json
+{
+  "observation": {
+    "observation_id": "obs-5e6f7a8b",
+    "action_id": "act-1a2b3c4d",
+    "execution_status": "success",
+    "new_facts": [
+      {"key": "q3_sales_growth", "value": "环比增长 12%", "category": "confirmed", "evidence": "act-1a2b3c4d"}
+    ],
+    "missing_information": [],
+    "progress": true,
+    "information_gain": "high",
+    "summary": "报告读取成功，已提取增长数据"
+  }
+}
+```
+
+#### 2.9.5 记录 TAO 评估事件
+
+- **方法与路径**：`POST /api/evaluation/tao/event`
+- **描述**：记录一次 TAO 运行的评估事件，包含 Think / Action / Observation 每轮数据，用于后续指标统计。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `event` | TAOEvaluationEvent | 是 | TAO 评估事件 |
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `success` | boolean | 是否成功 |
+| `event_id` | string | 事件 ID |
+| `total_events` | integer | 当前已记录事件总数 |
+
+---
+
+#### 2.9.6 获取 TAO 评估指标
+
+- **方法与路径**：`GET /api/evaluation/tao/metrics`
+- **描述**：获取聚合后的 TAO 四层评估指标（Think / Action / Observation / Overall）。
+
+**响应体**（TAOEvaluationMetrics）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `think` | ThinkMetrics | Think 阶段指标 |
+| `action` | ActionMetrics | Action 执行指标 |
+| `observation` | ObservationMetrics | Observation 解释指标 |
+| `overall` | OverallMetrics | 整体任务指标 |
+
+---
+
+#### 2.9.7 获取 TAO 评估报告
+
+- **方法与路径**：`GET /api/evaluation/tao/report`
+- **描述**：生成 TAO 评估报告，包含指标、异常样本与优化建议。
+
+**响应体**（TAOEvaluationReport）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `metrics` | TAOEvaluationMetrics | 聚合指标 |
+| `suggestions` | list[TAOEvaluationSuggestion] | 优化建议 |
+| `abnormal_samples` | list[string] | 异常样本事件 ID |
+| `summary` | string | 自然语言摘要 |
+
+---
+
+#### 2.9.8 导入 TAO 人工标注
+
+- **方法与路径**：`POST /api/evaluation/tao/annotate`
+- **描述**：导入 golden answer，用于计算动作选择、事实提取等准确率指标。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `annotations` | list[GoldenAnswer] | 是 | golden answer 列表 |
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `success` | boolean | 是否成功 |
+| `annotated_count` | integer | 成功导入数量 |
+
+---
+
+#### 2.9.9 导出 TAO 测试集
+
+- **方法与路径**：`GET /api/evaluation/tao/test-set`
+- **描述**：导出待人工标注的 TAO 测试集，golden answer 字段留空。
+
+**响应体**：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `test_set` | list[dict] | 测试集 |
+| `total` | integer | 样本数量 |
+
+---
+
+#### 2.9.10 TAO LLM as Judge
+
+- **方法与路径**：`POST /api/evaluation/tao/judge`
+- **描述**：对单轮 TAO 输出调用独立评估 LLM 打分。
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `request` | LLMJudgeRequest | 是 | 评估请求 |
+
+**响应体**（LLMJudgeResult）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `event_id` | string | 事件 ID |
+| `round_index` | integer | 轮次 |
+| `source` | string | 评分来源：`llm` / `code` |
+| `scores` | dict[str, float] | 各指标得分 |
+| `reasoning` | string | 评分理由 |
+
+---
+
 ## 3. 数据模型
 
 ### 3.1 Plan
@@ -2439,6 +2786,100 @@ Replan 效果评估指标，聚合五项核心指标和基础统计。
 | oscillation_rate | float | Replan 振荡率 |
 | total_replan_count | int | 总 Replan 次数 |
 | total_failure_cases | int | 总失败案例数 |
+
+---
+
+### 3.8 TAOState
+
+TAO 运行时聚合状态，在循环各轮之间（以及原子接口多次调用之间）传递。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| goal_state | GoalState | Goal State：`final_goal`、`current_goal`、`success_criteria`、`current_goal_completed` |
+| actions | list[ActionRecord] | Action State：按序记录的已执行动作 |
+| observations | list[Observation] | Observation State：按序记录的结构化解释结果 |
+| facts | object | Fact State：事实键 → FactItem（`key` / `value` / `category` / `evidence`），category 取值为 `confirmed` / `user_approved` / `speculative` / `rejected` / `missing` |
+| control | ControlState | Control State：`max_loops` / `used_loops` / `max_time` / `start_time` / `exit_reason` / `max_action_retries` |
+| plan_step_id | string | 关联的 Plan 步骤 ID（如有） |
+| candidate_actions | list[ActionCandidate] | 粗筛后的候选动作空间 |
+
+### 3.9 ActionCandidate
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| name | string | — | 动作唯一名称 |
+| type | string | `"tool_call"` | 动作类型：`tool_call` / `internal_api` / `user_interaction` / `aggregate` |
+| description | string | `""` | 动作功能描述 |
+| params_schema | object | `{}` | 期望的参数 schema |
+| preconditions | list[string] | `[]` | 硬前置条件（须先被确认的事实键） |
+| rollbackable | boolean | `true` | 是否可回滚 |
+| estimated_cost | string | `"low"` | 粗略成本估计：`low` / `medium` / `high` |
+| metadata | object | `{}` | 业务元数据（如 `plan_nodes` / `intents` 白名单、`sub_actions`） |
+
+### 3.10 ActionRecord
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| action_id | string | 自动生成 | 动作执行 ID（`act-xxxxxxxx`） |
+| name | string | — | 动作名称（来自候选空间） |
+| type | string | `"tool_call"` | 动作类型 |
+| tool_name | string | `""` | 底层工具/接口名称（如有） |
+| input | object | `{}` | 动作输入参数 |
+| output | any | `null` | 动作原始输出 |
+| status | string | `"pending"` | `pending` / `running` / `done` / `failed` |
+| error | string | `""` | 失败时的错误信息 |
+| start_time | string | 自动生成 | 开始时间（ISO 8601） |
+| end_time | string \| null | `null` | 结束时间 |
+| retry_count | int | `0` | 已重试次数 |
+| rollbackable | boolean | `true` | 是否可回滚 |
+
+### 3.11 Observation
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| observation_id | string | 自动生成 | 解释记录 ID（`obs-xxxxxxxx`） |
+| action_id | string | `""` | 被解释的动作 ID |
+| execution_status | string | `"success"` | `success` / `partial_success` / `failed`（HTTP 200 ≠ 真实成功） |
+| new_facts | list[ObservationFact] | `[]` | 新提取的事实，均绑定证据 |
+| missing_information | list[string] | `[]` | 该动作执行后仍缺失的信息 |
+| state_changes | list[string] | `[]` | 该动作引起的状态变化摘要 |
+| anomalies | list[string] | `[]` | 检测到的异常或违反的假设 |
+| suggested_next_action | string | `""` | 建议的下一动作（仅供参考） |
+| progress | boolean | `false` | 是否取得了实质进展 |
+| information_gain | string | `"low"` | 信息增益：`low` / `medium` / `high` |
+| summary | string | `""` | 简短自然语言摘要 |
+
+### 3.12 ThinkResult
+
+| 字段 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| current_goal | string | `""` | 本轮追求的目标 |
+| success_criteria_satisfied | boolean | `false` | 最终成功标准是否已满足 |
+| current_goal_completed | boolean | `false` | 当前阶段目标是否已完成 |
+| facts_sufficient | boolean | `false` | 已知事实是否足够 |
+| missing_slots | list[string] | `[]` | 缺失的事实槽位 |
+| unverified_assumptions | list[string] | `[]` | 尚未验证的假设 |
+| fact_conflicts | list[string] | `[]` | 检测到的事实冲突 |
+| selected_action | string | `""` | 选中的动作名称（来自候选空间） |
+| action_params | object | `{}` | 动作参数 |
+| should_stop | boolean | `false` | 是否应停止循环 |
+| exit_decision | string | `"continue"` | `continue` / `finish` / `clarify` / `retry` / `replan` / `interrupt` |
+| reason | string | `""` | 基于证据的选择理由（必须引用 Goal/Context/Constraint） |
+| risk_level | string | `"low"` | 风险等级：`low` / `medium` / `high` |
+| risk_reason | string | `""` | 风险非低时的说明 |
+
+### 3.13 TAOResult
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| exit_type | string | 最终出口类型 |
+| final_output | string | 最终输出文本（finish 时） |
+| clarify_message | string | 向用户提问的澄清消息（clarify 时） |
+| exit_reason | string | 出口原因详情 |
+| used_loops | int | 实际使用的循环轮数 |
+| total_actions | int | 执行的动作总数 |
+| exit_history | list[TAOExitRecord] | 每轮的出口决策记录 |
+| state | TAOState \| null | 最终 TAO 状态快照 |
 
 ---
 

@@ -11,6 +11,7 @@ from xplan.evaluation.metrics import PlanMetrics
 from xplan.evaluation.offline_analyzer import OfflineAnalysisResult, OfflineAnalyzer
 from xplan.evaluation.replan_evaluator import ReplanEvaluator
 from xplan.evaluation.user_correction_detector import UserCorrectionDetector
+from xplan.evaluation.tao_evaluator import TAOEvaluator
 
 __all__ = [
     "PlanMetrics",
@@ -18,4 +19,5 @@ __all__ = [
     "OfflineAnalyzer",
     "UserCorrectionDetector",
     "ReplanEvaluator",
+    "TAOEvaluator",
 ]
