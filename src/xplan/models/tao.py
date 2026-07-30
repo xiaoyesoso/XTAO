@@ -126,7 +126,11 @@ class GoalState(BaseModel):
 
 
 class ActionCandidate(BaseModel):
-    """A candidate Action in the coarse-filtered candidate space."""
+    """A candidate Action in the coarse-filtered candidate space.
+
+    An Action is a goal-oriented wrapper, not a raw tool. Extended metadata
+    fields help the coarse filter and Think engine make accurate selections.
+    """
 
     name: str = Field(description="Unique action name, e.g. query_metrics")
     type: ActionType = Field(default=ActionType.TOOL_CALL, description="Action type")
@@ -142,6 +146,38 @@ class ActionCandidate(BaseModel):
     rollbackable: bool = Field(default=True, description="Whether this action can be rolled back")
     estimated_cost: str = Field(default="low", description="Rough cost estimate: low/medium/high")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Extra business metadata")
+
+    # Extended metadata for accurate action selection
+    applicable_scenarios: list[str] = Field(
+        default_factory=list,
+        description="Scenarios where this action should be used",
+    )
+    inapplicable_scenarios: list[str] = Field(
+        default_factory=list,
+        description="Scenarios where this action must NOT be used",
+    )
+    required_params: list[str] = Field(default_factory=list, description="Required parameter keys")
+    optional_params: list[str] = Field(default_factory=list, description="Optional parameter keys")
+    cost: str = Field(default="low", description="Cost estimate: low/medium/high")
+    risk: str = Field(default="low", description="Risk level: low/medium/high")
+    reversible: bool = Field(default=True, description="Whether the action can be undone")
+    permissions: list[str] = Field(
+        default_factory=list,
+        description="Required permissions or authorization scopes",
+    )
+    tags: list[str] = Field(default_factory=list, description="Tags for filtering")
+    intents: list[str] = Field(
+        default_factory=list,
+        description="Intents under which this action is applicable",
+    )
+    repeatable_on_retry: bool = Field(
+        default=False,
+        description="Whether the action may recover on retry (e.g. network delays)",
+    )
+    alternatives: list[str] = Field(
+        default_factory=list,
+        description="Names of alternative actions that can replace this one",
+    )
 
 
 class ActionRecord(BaseModel):
@@ -169,6 +205,58 @@ class ActionRecord(BaseModel):
         if self.end_time is None:
             return None
         return int((self.end_time - self.start_time).total_seconds() * 1000)
+
+
+class ActionAvailability(BaseModel):
+    """Historical availability record for an Action.
+
+    Used to adjust action priority or temporarily mark actions as unavailable.
+    """
+
+    name: str = Field(description="Action name")
+    total_calls: int = Field(default=0, description="Total execution attempts")
+    success_calls: int = Field(default=0, description="Successful executions")
+    failed_calls: int = Field(default=0, description="Failed executions")
+    last_failure_at: datetime | None = Field(default=None, description="Last failure timestamp")
+    last_failure_reason: str = Field(default="", description="Last failure reason")
+    consecutive_failures: int = Field(default=0, description="Consecutive failure count")
+    disabled: bool = Field(default=False, description="Whether the action is disabled")
+
+    @property
+    def success_rate(self) -> float:
+        """Historical success rate in range [0, 1]."""
+        if self.total_calls == 0:
+            return 1.0
+        return self.success_calls / self.total_calls
+
+
+class ActionFilterRule(BaseModel):
+    """A rule-engine rule for filtering candidate Actions.
+
+    Rules are evaluated by the coarse filter to include or exclude actions based
+    on context predicates (facts, permissions, intent).
+    """
+
+    name: str = Field(description="Rule name")
+    action_names: list[str] = Field(
+        default_factory=list,
+        description="Action names this rule applies to; empty means all",
+    )
+    tags: list[str] = Field(default_factory=list, description="Tags this rule applies to")
+    required_facts: list[str] = Field(
+        default_factory=list,
+        description="Facts that must exist for the action to be included",
+    )
+    excluded_facts: list[str] = Field(
+        default_factory=list,
+        description="Facts that, if present, exclude the action",
+    )
+    required_permissions: list[str] = Field(
+        default_factory=list,
+        description="Permissions that must be granted",
+    )
+    intent: str = Field(default="", description="Intent this rule applies to")
+    include: bool = Field(default=True, description="True=include if matched, False=exclude")
 
 
 # ── Observation State ─────────────────────────────────────────

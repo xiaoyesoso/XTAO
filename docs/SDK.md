@@ -407,6 +407,49 @@ print(result["used_loops"])
 print(result["final_output"])
 ```
 
+#### Action metadata and filtering
+
+`ActionCandidate` supports extended metadata to help the engine filter and select the right action. Use `tags`, `intents`, `applicable_scenarios`, `permissions`, `cost`, `risk`, and `alternatives` to describe each candidate.
+
+```python
+from xplan.models import ActionCandidate, ActionType
+
+candidates = [
+    ActionCandidate(
+        name="query_user_profile",
+        type=ActionType.TOOL_CALL,
+        description="Query the user's profile from CRM",
+        required_params=["user_id"],
+        tags=["read", "crm"],
+        intents=["personalization"],
+        applicable_scenarios=["user_id is known and profile is missing"],
+        inapplicable_scenarios=["user_id is missing"],
+        permissions=["crm:read"],
+        cost="low",
+        risk="low",
+        alternatives=["ask_user_for_profile"],
+    ),
+    ActionCandidate(
+        name="ask_user_for_profile",
+        type=ActionType.USER_INTERACTION,
+        description="Ask the user to provide profile information",
+        tags=["user_interaction"],
+        intents=["personalization"],
+        applicable_scenarios=["user_id is missing or CRM query failed"],
+        cost="low",
+        risk="low",
+    ),
+]
+
+result = await client.run_tao(
+    user_input="Recommend a product based on the user profile",
+    candidate_actions=candidates,
+    max_loops=8,
+)
+```
+
+The engine runs deterministic filters (intent, tag, preconditions, permissions) first, then ranks by historical success rate and information gain, and finally uses an LLM coarse+fine filter to pick the best action.
+
 #### `tao_think(state) -> dict`
 `POST /api/tao/think` - Atomic TAO Think round.
 

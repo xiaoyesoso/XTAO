@@ -44,9 +44,13 @@ from xplan.engine.tao_engine import TAOEngine
 from xplan.engine.tao_think_engine import TAOThinkEngine
 from xplan.engine.tao_action_runtime import (
     IllegalActionError,
+    ParameterValidationError,
+    PermissionError,
     PreconditionError,
     TAOActionRuntime,
 )
+from xplan.engine.tao_massive_action_filter import MassiveActionFilter
+from xplan.models import ActionAvailability, ActionFilterRule
 from xplan.engine.tao_observation_interpreter import TAOObservationInterpreter
 from xplan.engine.tao_loop_controller import TAOLoopController
 from xplan.services.tao_state_manager import TAOStateManager
@@ -82,8 +86,11 @@ def build_think_response(
     exit_decision: str = "continue",
     risk_level: str = "low",
     missing_slots: list[str] | None = None,
-    reason: str = "test reason",
+    reason: str = "",
 ) -> str:
+    reason = reason or (
+        f"select {selected_action} to advance goal based on current context"
+    )
     return json.dumps(
         {
             "current_goal": "read report",
@@ -345,6 +352,216 @@ class TestActionRuntime:
         assert [c.name for c in filtered] == ["a2"]
 
 
+@pytest.mark.asyncio
+class TestActionSelectionEnhancements:
+    """Tests for TAO Action selection accuracy optimizations."""
+
+    async def test_coarse_filter_by_intent_and_tags(self):
+        """Coarse filter supports intent and tag filtering."""
+        runtime = TAOActionRuntime()
+        candidates = [
+            ActionCandidate(
+                name="after_sales_refund",
+                intents=["after_sales"],
+                tags=["refund"],
+            ),
+            ActionCandidate(
+                name="pre_sales_query",
+                intents=["pre_sales"],
+                tags=["query"],
+            ),
+        ]
+        filtered = runtime.coarse_filter(candidates, intent="after_sales")
+        assert [c.name for c in filtered] == ["after_sales_refund"]
+
+        filtered = runtime.coarse_filter(candidates, tags=["query"])
+        assert [c.name for c in filtered] == ["pre_sales_query"]
+
+    async def test_coarse_filter_by_required_params_and_permissions(self):
+        """Coarse filter excludes actions with missing required params or permissions."""
+        runtime = TAOActionRuntime()
+        state = TAOState(goal_state=GoalState(final_goal="test"))
+        state.facts["order_id"] = FactItem(
+            key="order_id", value="123", category=FactCategory.CONFIRMED
+        )
+        candidates = [
+            ActionCandidate(name="query_order", required_params=["order_id"]),
+            ActionCandidate(
+                name="refund_order",
+                required_params=["order_id"],
+                permissions=["refund"],
+            ),
+            ActionCandidate(name="query_user", required_params=["user_id"]),
+        ]
+        filtered = runtime.coarse_filter(
+            candidates, state=state, granted_permissions=["refund"]
+        )
+        assert [c.name for c in filtered] == ["query_order", "refund_order"]
+
+    async def test_coarse_filter_by_success_rate_and_rules(self):
+        """Coarse filter respects historical success rate and declarative rules."""
+        runtime = TAOActionRuntime()
+        runtime.record_failure("flaky", "timeout")
+        runtime.record_failure("flaky", "timeout")
+        runtime.record_success("stable")
+
+        candidates = [
+            ActionCandidate(name="flaky"),
+            ActionCandidate(name="stable"),
+        ]
+        filtered = runtime.coarse_filter(
+            candidates, required_success_rate=0.5
+        )
+        assert [c.name for c in filtered] == ["stable"]
+
+        rule = ActionFilterRule(
+            name="exclude_flaky",
+            action_names=["flaky"],
+            include=False,
+        )
+        runtime.register_filter_rules([rule])
+        filtered = runtime.coarse_filter([
+            ActionCandidate(name="flaky"),
+            ActionCandidate(name="stable"),
+        ])
+        assert [c.name for c in filtered] == ["stable"]
+
+    async def test_execute_pre_validation(self):
+        """Execute validates candidate space, permissions, and params."""
+        runtime = TAOActionRuntime()
+        runtime.register_executor("send_email", lambda p: "sent")
+        candidate = ActionCandidate(
+            name="send_email",
+            required_params=["to"],
+            params_schema={"to": "recipient email"},
+            permissions=["email"],
+        )
+        state = TAOState(
+            goal_state=GoalState(final_goal="test"),
+            candidate_actions=[candidate],
+        )
+
+        # Missing permission
+        with pytest.raises(PermissionError):
+            await runtime.execute(candidate, {"to": "a@b.com"}, state)
+
+        # Missing required param
+        with pytest.raises(ParameterValidationError):
+            await runtime.execute(
+                candidate, {}, state, granted_permissions=["email"]
+            )
+
+        # Unknown param
+        with pytest.raises(ParameterValidationError):
+            await runtime.execute(
+                candidate,
+                {"to": "a@b.com", "extra": "x"},
+                state,
+                granted_permissions=["email"],
+            )
+
+    async def test_retry_wrapper(self):
+        """Retry wrapper retries transient failures."""
+        runtime = TAOActionRuntime(max_retries=2)
+        attempts = 0
+
+        def flaky(params: dict[str, Any]) -> str:
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise TimeoutError("timeout")
+            return "ok"
+
+        wrapped = runtime.retry_wrapper(flaky, retryable_exceptions=(TimeoutError,))
+        result = await wrapped({})
+        assert result == "ok"
+        assert attempts == 3
+
+    async def test_fallback_wrapper(self):
+        """Fallback wrapper switches to fallback executor on failure."""
+        runtime = TAOActionRuntime()
+
+        def primary(params: dict[str, Any]) -> str:
+            raise ConnectionError("primary failed")
+
+        def fallback(params: dict[str, Any]) -> str:
+            return "fallback ok"
+
+        wrapped = runtime.fallback_wrapper(primary, fallback)
+        result = await wrapped({})
+        assert result == "fallback ok"
+
+    async def test_circuit_breaker_wrapper(self):
+        """Circuit breaker disables action after consecutive failures."""
+        runtime = TAOActionRuntime(circuit_breaker_threshold=2)
+
+        def failing(params: dict[str, Any]) -> str:
+            raise RuntimeError("fail")
+
+        wrapped = runtime.circuit_breaker_wrapper("cb_action", failing)
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await wrapped({})
+
+        with pytest.raises(Exception) as exc_info:
+            await wrapped({})
+        assert "disabled by circuit breaker" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+class TestMassiveActionFilter:
+    """Tests for the massive action filter pipeline."""
+
+    async def test_intent_and_tag_filter(self):
+        """Pipeline filters by intent and tags."""
+        filter_ = MassiveActionFilter()
+        candidates = [
+            ActionCandidate(name="a1", intents=["sales"], tags=["query"]),
+            ActionCandidate(name="a2", intents=["support"], tags=["refund"]),
+        ]
+        result = await filter_.filter(candidates, intent="sales")
+        assert [c.name for c in result] == ["a1"]
+
+        result = await filter_.filter(candidates, tags=["refund"])
+        assert [c.name for c in result] == ["a2"]
+
+    async def test_short_circuit(self):
+        """Pipeline short-circuits when candidate count drops below threshold."""
+        filter_ = MassiveActionFilter(short_circuit_threshold=2)
+        candidates = [
+            ActionCandidate(name="a1", intents=["sales"]),
+            ActionCandidate(name="a2", intents=["sales"]),
+            ActionCandidate(name="a3", intents=["support"]),
+        ]
+        result = await filter_.filter(candidates, intent="sales")
+        assert {c.name for c in result} == {"a1", "a2"}
+
+    async def test_information_gain_ranking(self):
+        """Pipeline ranks actions that fill missing slots higher."""
+        filter_ = MassiveActionFilter(short_circuit_threshold=1)
+        state = TAOState(goal_state=GoalState(final_goal="test"))
+        state.facts["user_id"] = FactItem(
+            key="user_id", value="u1", category=FactCategory.CONFIRMED
+        )
+        state.facts["order_id"] = FactItem(
+            key="order_id", value=None, category=FactCategory.MISSING
+        )
+        candidates = [
+            ActionCandidate(
+                name="query_user",
+                description="get user info",
+                applicable_scenarios=["need user_id"],
+            ),
+            ActionCandidate(
+                name="query_order",
+                description="get order by order_id",
+                applicable_scenarios=["need order_id"],
+            ),
+        ]
+        result = await filter_.filter(candidates, state=state)
+        assert [c.name for c in result] == ["query_order", "query_user"]
+
+
 # ── 12.4 Observation interpreter tests ───────────────────────
 
 
@@ -485,6 +702,39 @@ class TestLoopController:
         record = ctrl.decide(state, think)
         assert record.exit_type == TAOExit.INTERRUPT
         assert record.overridden
+
+    def test_dead_loop_detection(self):
+        """Repeated selection of the same action triggers clarify."""
+        ctrl = TAOLoopController(dead_loop_threshold=2)
+        state = self._state()
+        state.actions = [
+            ActionRecord(name="read_report", status=ActionStatus.DONE),
+            ActionRecord(name="read_report", status=ActionStatus.DONE),
+        ]
+        think = ThinkResult(
+            selected_action="read_report", exit_decision=TAOExit.CONTINUE
+        )
+        record = ctrl.decide(state, think)
+        assert record.exit_type == TAOExit.CLARIFY
+        assert "dead loop" in record.reason.lower()
+
+    def test_stagnation_detection(self):
+        """No progress over recent rounds triggers clarify."""
+        ctrl = TAOLoopController(dead_loop_threshold=3)
+        state = self._state()
+        state.observations = [
+            Observation(
+                action_id="act-1",
+                execution_status=ExecutionStatus.SUCCESS,
+                progress=False,
+                information_gain=InformationGain.LOW,
+            )
+            for _ in range(4)
+        ]
+        think = ThinkResult(exit_decision=TAOExit.CONTINUE)
+        record = ctrl.decide(state, think)
+        assert record.exit_type == TAOExit.CLARIFY
+        assert "stagnation" in record.reason.lower() or "progress" in record.reason.lower()
 
 
 # ── 12.6 Double-layer TAO loop tests ─────────────────────────
@@ -655,7 +905,9 @@ class TestTAOIntegration:
         llm = FakeLLMService(
             [
                 plan_json,  # plan generation
-                build_think_response(exit_decision="finish"),  # TAO think
+                build_think_response(
+                    selected_action="execute_step", exit_decision="finish"
+                ),  # TAO think
             ]
         )
         runtime = TAOActionRuntime()

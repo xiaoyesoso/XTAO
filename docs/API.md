@@ -1880,6 +1880,65 @@ Each round runs: **Think** (five structured judgments: goal, state, path, stop, 
 
 TAO can also be enabled per step inside the main orchestration flow via `OrchestratorConfig.use_tao` (see [POST /api/plan/run](#post-apiplanrun)).
 
+#### Action Design & Candidate Filtering
+
+An Action in TAO is a goal-oriented wrapper, not a raw tool. Good Action design directly affects Think accuracy and loop stability.
+
+**Design principles**
+
+| Principle | Description |
+|---|---|
+| Business completeness | An Action represents a complete business operation; internally it may call one tool, multiple tools, or spawn a sub-agent. |
+| Orthogonality | Actions have clear responsibility boundaries; overlap should be minimized. |
+| Sub-agent encapsulation | Complex subtasks are encapsulated as sub-agents and launched via Actions. |
+| Coarse-grained anti-pattern | When the action space is too large, prefer coarse-grained Actions whose internal logic dispatches to concrete operations, combined with multi-stage filtering. |
+| Minimal params/returns | Parameters should be easy to obtain; return values should expose only what the caller needs. |
+
+**Candidate metadata**
+
+`ActionCandidate` carries extended metadata to support filtering and evidence-based selection. Beyond the base fields documented in the model reference, the following fields are available:
+
+| Field | Type | Description |
+|---|---|---|
+| `applicable_scenarios` | array[string] | Scenarios where this action should be used. |
+| `inapplicable_scenarios` | array[string] | Scenarios where this action must NOT be used. |
+| `required_params` | array[string] | Required parameter keys. |
+| `optional_params` | array[string] | Optional parameter keys. |
+| `cost` | string | Cost estimate: `low` / `medium` / `high`. |
+| `risk` | string | Risk level: `low` / `medium` / `high`. |
+| `reversible` | boolean | Whether the action can be undone. |
+| `permissions` | array[string] | Required permissions or authorization scopes. |
+| `tags` | array[string] | Tags for filtering. |
+| `intents` | array[string] | Intents under which this action is applicable. |
+| `repeatable_on_retry` | boolean | Whether the action may recover on retry (e.g. transient network delays). |
+| `alternatives` | array[string] | Names of alternative actions that can replace this one. |
+
+**Filtering pipeline**
+
+The engine coarse-filters the full candidate space before each Think round:
+
+```
+All Actions → intent/tag filter → rule engine → preconditions/permissions → success rate → information gain → LLM coarse filter → LLM fine filter → Selected Action
+```
+
+- Deterministic filters (intent, tag, rules, preconditions, permissions) run first and can short-circuit the pipeline when the remaining candidates are few enough.
+- `ActionFilterRule` objects can be used to include/exclude actions based on facts, permissions, or intent.
+- Historical success rates are tracked in `ActionAvailability` and used to deprioritize or temporarily disable unreliable actions.
+- Information-gain ranking prioritizes actions that fill currently missing slots.
+- LLM coarse filter uses the fast model with minimal context; the fine filter uses the pro model with full context.
+
+**Execution guards**
+
+Before executing the selected action, the runtime verifies:
+- The action name is in the current candidate space.
+- All `required_params` are present.
+- The caller has the required `permissions`.
+- Input parameters conform to `params_schema`.
+
+**High availability & permissions**
+
+Actions support retry, fallback to `alternatives`, circuit-breaker disabling, and rate limiting. Permission checks can be implemented either inside the Action wrapper or via a unified AOP layer.
+
 #### POST /api/tao/run
 
 Run the full TAO loop until an exit other than continue/retry is taken.
@@ -2480,6 +2539,18 @@ Aggregate TAO runtime state, carried across loop rounds (and between atomic API 
 | `rollbackable` | boolean | `true` | Whether this action can be rolled back |
 | `estimated_cost` | string | `"low"` | Rough cost estimate: `low` / `medium` / `high` |
 | `metadata` | object | `{}` | Extra business metadata (e.g. `plan_nodes` / `intents` whitelists, `sub_actions`) |
+| `applicable_scenarios` | array[string] | `[]` | Scenarios where this action should be used |
+| `inapplicable_scenarios` | array[string] | `[]` | Scenarios where this action must NOT be used |
+| `required_params` | array[string] | `[]` | Required parameter keys |
+| `optional_params` | array[string] | `[]` | Optional parameter keys |
+| `cost` | string | `"low"` | Cost estimate: `low` / `medium` / `high` |
+| `risk` | string | `"low"` | Risk level: `low` / `medium` / `high` |
+| `reversible` | boolean | `true` | Whether the action can be undone |
+| `permissions` | array[string] | `[]` | Required permissions or authorization scopes |
+| `tags` | array[string] | `[]` | Tags for filtering |
+| `intents` | array[string] | `[]` | Intents under which this action is applicable |
+| `repeatable_on_retry` | boolean | `false` | Whether the action may recover on retry |
+| `alternatives` | array[string] | `[]` | Names of alternative actions that can replace this one |
 
 ### ActionRecord
 

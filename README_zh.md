@@ -10,16 +10,30 @@
 
 ## 目录
 
-- [功能特性](#功能特性)
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [快速开始](#快速开始)
-- [环境变量](#环境变量)
-- [API 概览](#api-概览)
-- [Python SDK](#python-sdk)
-- [测试](#测试)
-- [G4C 方法论简述](#g4c-方法论简述)
-- [开源协议](#开源协议)
+- [XPlan](#xplan)
+  - [目录](#目录)
+  - [功能特性](#功能特性)
+  - [技术栈](#技术栈)
+  - [项目结构](#项目结构)
+  - [快速开始](#快速开始)
+    - [本地开发](#本地开发)
+    - [Docker 部署](#docker-部署)
+  - [环境变量](#环境变量)
+  - [API 概览](#api-概览)
+    - [健康检查与监控](#健康检查与监控)
+    - [Plan 管理](#plan-管理)
+    - [约束管理](#约束管理)
+    - [可信状态管理](#可信状态管理)
+    - [回溯](#回溯)
+    - [候选路径](#候选路径)
+    - [评估](#评估)
+    - [TAO（Think-Action-Observation）](#taothink-action-observation)
+    - [TAO Action 设计说明](#tao-action-设计说明)
+  - [Python SDK](#python-sdk)
+  - [测试](#测试)
+  - [G4C 方法论简述](#g4c-方法论简述)
+    - [关键设计原则](#关键设计原则)
+  - [开源协议](#开源协议)
 
 ---
 
@@ -93,7 +107,8 @@ XPlan/
 │       │   ├── rag_service.py     # RAGService（知识库检索）
 │       │   ├── constraint_manager.py       # 约束管理（硬/软）
 │       │   ├── trust_state_manager.py      # 可信状态管理
-│       │   └── candidate_path_manager.py   # 候选路径管理
+│       │   ├── candidate_path_manager.py   # 候选路径管理
+│       │   └── tao_state_manager.py        # TAO 运行时状态管理
 │       ├── engine/                # 核心引擎
 │       │   ├── plan_generator.py          # 7 步 G4C 生成
 │       │   ├── plan_verifier.py           # G4C 五维度评分
@@ -107,11 +122,12 @@ XPlan/
 │       │   ├── cross_turn_tracker.py      # 跨轮次追踪
 │       │   ├── failure_tracer.py          # 失败回溯与根因定位
 │       │   ├── orchestrator.py            # 主编排引擎（主接口实现）
-│       │   ├── tao_engine.py            # TAO 受控状态循环引擎
-│       │   ├── tao_think_engine.py      # 五类结构化 Think 判断
-│       │   ├── tao_action_runtime.py    # Action 抽象与执行
+│       │   ├── tao_engine.py              # TAO 受控状态循环引擎
+│       │   ├── tao_think_engine.py        # 五类结构化 Think 判断
+│       │   ├── tao_action_runtime.py      # Action 抽象与执行（筛选、高可用包装器）
 │       │   ├── tao_observation_interpreter.py # 原始输出转结构化 Observation
-│       │   └── tao_loop_controller.py   # 循环出口控制器
+│       │   ├── tao_loop_controller.py     # 循环出口 + 死循环/停滞检测
+│       │   └── tao_massive_action_filter.py # 海量 Action 多级筛选流水线
 │       ├── sdk/                   # Python SDK（REST API 异步客户端）
 │       │   ├── client.py                 # XPlanClient（覆盖全部 31 个接口）
 │       │   └── exceptions.py             # XPlanError / APIError / ConnectionError 等
@@ -122,6 +138,12 @@ XPlan/
 │           ├── user_correction_detector.py # 用户纠偏检测
 │           └── tao_evaluator.py        # TAO 质量评估（Think/Action/Observation 指标）
 ├── tests/                         # 单元测试与集成测试
+│   ├── test_plan.py                # G4C 核心单元测试
+│   ├── test_tao.py                 # TAO 模型/引擎/筛选/循环安全单元测试
+│   ├── test_backtracking.py        # 回溯引擎单元测试
+│   ├── test_tracing.py             # 失败回溯单元测试
+│   ├── test_live.py                # 真实 LLM 集成测试
+│   └── test_tao_live.py            # TAO 真实模型端到端测试
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -265,6 +287,18 @@ docker compose up -d
 | POST | `/api/evaluation/tao/annotate` | 导入 TAO 人工标注 |
 | GET | `/api/evaluation/tao/test-set` | 导出 TAO 测试集 |
 | POST | `/api/evaluation/tao/judge` | TAO LLM as Judge 评估 |
+
+### TAO Action 设计说明
+
+TAO 中的 Action 是面向目标的操作封装，不是原始工具。良好的 Action 设计能显著提升 Think 准确率与循环稳定性：
+
+- **业务完整性**：Action 是一个业务上完整的操作，内部可调用一个或多个工具，也可启动子 Agent。
+- **正交性**：职责边界清晰，尽量减少 Action 之间的重叠。
+- **子 Agent 封装**：复杂子任务可封装为子 Agent，通过 Action 启动。
+- **元数据驱动选择**：填写 `tags`、`intents`、`applicable_scenarios`、`permissions`、`cost`、`risk`、`alternatives` 等字段，帮助引擎筛选候选并选择正确的 Action。
+- **执行前校验**：运行时会检查 Action 是否在候选空间、必填参数是否提供、权限是否满足、参数是否符合 schema。
+
+完整筛选流水线见 [docs/API_zh.md](docs/API_zh.md)，使用示例见 [docs/SDK_zh.md](docs/SDK_zh.md)。
 
 ---
 

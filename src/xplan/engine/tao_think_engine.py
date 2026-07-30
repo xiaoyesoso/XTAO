@@ -32,6 +32,24 @@ def _extract_json(text: str) -> Any:
     return json.loads(text.strip())
 
 
+def _evidence_fragments(texts) -> set[str]:
+    """Split evidence texts into matchable fragments.
+
+    Whole sentences rarely appear verbatim in a free-form reason, so we
+    additionally index their word/phrase fragments (>= 4 chars). Action
+    names and short tokens are kept as-is.
+    """
+    fragments: set[str] = set()
+    for text in texts:
+        if not text:
+            continue
+        fragments.add(text)
+        for part in re.split(r"[^\w一-鿿]+", text):
+            if len(part) >= 4:
+                fragments.add(part)
+    return fragments
+
+
 class TAOThinkEngine:
     """Think decision engine for the TAO loop.
 
@@ -57,6 +75,18 @@ class TAOThinkEngine:
         self.llm_service = llm_service
         self.constraint_manager = constraint_manager
         self.max_output_retries = max_output_retries
+        self.few_shot_examples: dict[str, list[dict[str, Any]]] | None = None
+
+    def set_few_shot_examples(
+        self, examples: dict[str, list[dict[str, Any]]] | None
+    ) -> None:
+        """Set few-shot examples for candidate actions.
+
+        Args:
+            examples: Mapping from action name to a list of example dicts.
+                Each example dict has keys: scenario, selected, reason.
+        """
+        self.few_shot_examples = examples
 
     async def think(self, state: TAOState) -> ThinkResult:
         """Run one Think round: five structured judgments.
@@ -69,7 +99,9 @@ class TAOThinkEngine:
         """
         hard, soft = self._get_constraints()
         system_prompt = build_tao_think_system_prompt(hard, soft)
-        user_prompt = build_tao_think_user_prompt(state)
+        user_prompt = build_tao_think_user_prompt(
+            state, few_shot_examples=getattr(self, "few_shot_examples", None)
+        )
 
         last_error: Exception | None = None
         for attempt in range(self.max_output_retries + 1):
@@ -150,11 +182,18 @@ class TAOThinkEngine:
         Checks:
         - selected_action must come from the candidate space when the exit
           decision requires an action (continue / retry)
-        - reason must be non-empty (evidence-based requirement)
+        - reason must be non-empty and evidence-based (minimum length requirement)
+        - reason must reference concrete facts, constraints, or criteria
 
         Raises:
             ValueError: When validation fails
         """
+        reason = result.reason.strip()
+        if not reason:
+            raise ValueError("reason must be non-empty (evidence-based requirement)")
+        if len(reason) < 10:
+            raise ValueError("reason is too short; provide an evidence-based explanation")
+
         if result.exit_decision in (TAOExit.CONTINUE, TAOExit.RETRY):
             candidate_names = {c.name for c in state.candidate_actions}
             # USER_INTERACTION candidates and aggregate actions are also in the space
@@ -163,8 +202,36 @@ class TAOThinkEngine:
                     f"selected_action '{result.selected_action}' is not in the candidate space "
                     f"{sorted(candidate_names)}"
                 )
-        if not result.reason.strip():
-            raise ValueError("reason must be non-empty (evidence-based requirement)")
+        else:
+            # Evidence anchoring below only applies to action-selecting
+            # decisions; finish/clarify/replan reasons describe outcomes.
+            return
+
+        # Soft evidence check: when concrete anchors exist, the reason should
+        # reference at least one keyword from facts, constraints, success
+        # criteria, or the selected/recent action names. This is logged as a
+        # warning rather than enforced, because LLMs often paraphrase or mix
+        # languages, which makes exact substring matching unreliable. The
+        # evidence-based requirement remains a prompt-level boundary rule.
+        evidence_keywords: set[str] = set()
+        evidence_keywords.update(_evidence_fragments(state.facts.keys()))
+        evidence_keywords.update(_evidence_fragments(state.goal_state.success_criteria))
+        evidence_keywords.update(c.name for c in state.candidate_actions)
+        last_action = state.last_action()
+        if last_action is not None:
+            evidence_keywords.add(last_action.name)
+        if self.constraint_manager is not None:
+            hard_constraints, soft_constraints = self._get_constraints()
+            evidence_keywords.update(_evidence_fragments(hard_constraints))
+            evidence_keywords.update(_evidence_fragments(soft_constraints))
+        if evidence_keywords and not any(
+            keyword.lower() in reason.lower() for keyword in evidence_keywords
+        ):
+            logger.warning(
+                "Evidence check not satisfied. reason=%r; keywords sample=%s",
+                reason[:200],
+                sorted(evidence_keywords)[:20],
+            )
 
     # ── Constraint helpers ────────────────────────────────────
 

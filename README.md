@@ -52,7 +52,8 @@ XPlan/
 │   │   └── orchestrator.py          # OrchestratorConfig / OrchestratorResult
 │   ├── prompts/                    # Prompt modules (one per G4C element)
 │   ├── services/                   # LLMService, RAGService, ConstraintManager,
-│   │                               # TrustStateManager, CandidatePathManager
+│   │                               # TrustStateManager, CandidatePathManager,
+│   │                               # TAOStateManager
 │   ├── engine/                     # Core engine
 │   │   ├── plan_generator.py       # 7-step G4C generation
 │   │   ├── plan_verifier.py        # G4C 5-dimension scoring
@@ -66,19 +67,24 @@ XPlan/
 │   │   ├── cross_turn_tracker.py   # Cross-turn contamination tracking
 │   │   ├── failure_tracer.py       # Failure backtracking + root cause localization
 │   │   ├── orchestrator.py         # PlanOrchestrator (main entrypoint engine)
-│   │   ├── tao_engine.py            # TAO controlled state loop engine
-│   │   ├── tao_think_engine.py      # Five structured Think judgments
-│   │   ├── tao_action_runtime.py    # Action abstraction & execution
+│   │   ├── tao_engine.py           # TAO controlled state loop engine
+│   │   ├── tao_think_engine.py     # Five structured Think judgments
+│   │   ├── tao_action_runtime.py   # Action abstraction & execution (filters, HA wrappers)
 │   │   ├── tao_observation_interpreter.py # Raw output -> structured Observation
-│   │   └── tao_loop_controller.py   # Loop exit controller
+│   │   ├── tao_loop_controller.py  # Loop exit + dead-loop/stagnation detection
+│   │   └── tao_massive_action_filter.py  # Multi-stage candidate filtering pipeline
 │   ├── sdk/                        # Python SDK - async client for the REST API
 │   │   ├── client.py               # XPlanClient (all 31 endpoints)
 │   │   └── exceptions.py           # XPlanError / APIError / ConnectionError / ...
 │   └── evaluation/                 # Metrics, offline analyzer, ReplanEvaluator
 │       └── tao_evaluator.py        # TAO quality evaluation (Think/Action/Observation metrics)
 ├── tests/
-│   ├── test_plan.py                # Unit tests
-│   └── test_live.py                # Live LLM integration test
+│   ├── test_plan.py                # Unit tests (G4C core)
+│   ├── test_tao.py                 # Unit tests (TAO models, engine, filtering, loop safety)
+│   ├── test_backtracking.py        # Unit tests (backtracking engine)
+│   ├── test_tracing.py             # Unit tests (failure tracing)
+│   ├── test_live.py                # Live LLM integration test
+│   └── test_tao_live.py            # Live TAO end-to-end test
 ├── docs/
 │   ├── API.md / API_zh.md          # Bilingual REST API reference
 │   └── SDK.md / SDK_zh.md          # Bilingual Python SDK docs
@@ -215,6 +221,18 @@ All routes are prefixed with `/api`. **`POST /api/plan/run` is the primary entry
 | `POST` | `/api/evaluation/tao/annotate` | Import golden-answer annotations for TAO |
 | `GET` | `/api/evaluation/tao/test-set` | Export TAO evaluation test set |
 | `POST` | `/api/evaluation/tao/judge` | Run LLM-as-judge on a single TAO round |
+
+### TAO Action Design
+
+TAO Actions are goal-oriented wrappers, not raw tools. Designing them well improves Think accuracy and loop stability:
+
+- **Business completeness** — an Action is a complete business operation; internally it may call one or more tools or spawn a sub-agent.
+- **Orthogonality** — keep responsibility boundaries clear to reduce overlap.
+- **Sub-agent encapsulation** — complex subtasks can be encapsulated as sub-agents launched via Actions.
+- **Metadata-driven selection** — populate `tags`, `intents`, `applicable_scenarios`, `permissions`, `cost`, `risk`, and `alternatives` to help the engine filter candidates and pick the right action.
+- **Execution guards** — the runtime checks candidate-space membership, required params, permissions, and parameter schema before execution.
+
+See [docs/API.md](docs/API.md) for the full filtering pipeline and [docs/SDK.md](docs/SDK.md) for usage examples.
 
 ## Testing
 

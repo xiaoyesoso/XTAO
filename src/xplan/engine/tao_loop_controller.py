@@ -31,15 +31,27 @@ class TAOLoopController:
 
     Attributes:
         max_action_retries: Retry threshold per action
+        dead_loop_threshold: Consecutive selections of the same action before dead loop
+        stagnation_window: Number of recent rounds checked for stagnation
     """
 
-    def __init__(self, max_action_retries: int = 2) -> None:
+    def __init__(
+        self,
+        max_action_retries: int = 2,
+        dead_loop_threshold: int = 3,
+        stagnation_window: int | None = None,
+    ) -> None:
         """Initialize the exit controller.
 
         Args:
             max_action_retries: Retry threshold per action
+            dead_loop_threshold: Consecutive selections of the same action before dead loop
+            stagnation_window: Number of recent rounds checked for stagnation;
+                defaults to dead_loop_threshold + 1
         """
         self.max_action_retries = max_action_retries
+        self.dead_loop_threshold = dead_loop_threshold
+        self.stagnation_window = stagnation_window or (dead_loop_threshold + 1)
 
     def decide(self, state: TAOState, think: ThinkResult) -> TAOExitRecord:
         """Decide the exit for the current round.
@@ -47,10 +59,11 @@ class TAOLoopController:
         Priority order (code rules override the LLM decision):
         1. Control limits exceeded => interrupt
         2. Success criteria satisfied => finish
-        3. High-risk action violating hard constraints => clarify/replan
-        4. LLM-proposed retry with exhausted budget => replan
-        5. No candidate action can advance => clarify
-        6. LLM exit decision (validated)
+        3. Dead loop / stagnation detected => clarify / replan
+        4. High-risk action violating hard constraints => clarify/replan
+        5. LLM-proposed retry with exhausted budget => replan
+        6. No candidate action can advance => clarify
+        7. LLM exit decision (validated)
 
         Args:
             state: Current TAO state
@@ -63,7 +76,7 @@ class TAOLoopController:
         exit_type = think.exit_decision
         reason = think.reason
 
-        # Rule 1: control state limits (task 6.3)
+        # Rule 1: control state limits (task 6.3 / 6.6)
         forced = self._check_control_limits(state)
         if forced is not None:
             exit_type, reason, overridden = forced[0], forced[1], exit_type != forced[0]
@@ -80,7 +93,20 @@ class TAOLoopController:
                 exit_type = TAOExit.FINISH
             return self._record(state, exit_type, reason or think.reason, overridden)
 
-        # Rule 3: high risk => prefer clarify / replan (task 3.7 linkage)
+        # Rule 3: dead loop / stagnation detection (task 6.3 / 6.4 / 6.5)
+        loop_check = self._check_dead_loop(state, think)
+        if loop_check is not None:
+            exit_type, reason = loop_check
+            overridden = exit_type != think.exit_decision
+            return self._record(state, exit_type, reason, overridden)
+
+        stagnation_check = self._check_stagnation(state)
+        if stagnation_check is not None:
+            exit_type, reason = stagnation_check
+            overridden = exit_type != think.exit_decision
+            return self._record(state, exit_type, reason, overridden)
+
+        # Rule 4: high risk => prefer clarify / replan (task 3.7 linkage)
         if think.risk_level == RiskLevel.HIGH and exit_type in (TAOExit.CONTINUE, TAOExit.RETRY):
             overridden = True
             exit_type = TAOExit.CLARIFY
@@ -90,7 +116,7 @@ class TAOLoopController:
             )
             return self._record(state, exit_type, reason, overridden)
 
-        # Rule 4: retry budget control (task 6.4)
+        # Rule 5: retry budget control (task 6.4)
         if exit_type == TAOExit.RETRY:
             last_action = state.last_action()
             if last_action is not None and last_action.status == ActionStatus.FAILED:
@@ -109,7 +135,7 @@ class TAOLoopController:
                 reason = "Retry requested but last action did not fail; continuing instead"
                 return self._record(state, exit_type, reason, overridden)
 
-        # Rule 5: continue requires at least one advanceable candidate (task 6.2)
+        # Rule 6: continue requires at least one advanceable candidate (task 6.2)
         if exit_type == TAOExit.CONTINUE and not state.candidate_actions:
             overridden = True
             exit_type = TAOExit.CLARIFY
@@ -132,6 +158,52 @@ class TAOLoopController:
             return (
                 TAOExit.INTERRUPT,
                 f"max_time_exceeded: exceeded {state.control.max_time}s budget",
+            )
+        return None
+
+    def _check_dead_loop(
+        self, state: TAOState, think: ThinkResult
+    ) -> tuple[TAOExit, str] | None:
+        """Detect repeated selection of the same action without new information."""
+        selected = think.selected_action
+        if not selected or think.exit_decision not in (TAOExit.CONTINUE, TAOExit.RETRY):
+            return None
+
+        consecutive = 0
+        for record in reversed(state.actions):
+            if record.name == selected:
+                consecutive += 1
+            else:
+                break
+
+        if consecutive >= self.dead_loop_threshold:
+            return (
+                TAOExit.CLARIFY,
+                (
+                    f"Action '{selected}' selected {consecutive} consecutive times; "
+                    "treating as a dead loop"
+                ),
+            )
+        return None
+
+    def _check_stagnation(self, state: TAOState) -> tuple[TAOExit, str] | None:
+        """Detect lack of real progress over recent rounds."""
+        window = self.stagnation_window
+        recent_observations = state.observations[-window:]
+        if len(recent_observations) < window:
+            return None
+
+        any_progress = any(
+            obs.progress
+            or obs.information_gain.value in ("medium", "high")
+            or bool(obs.new_facts)
+            or bool(obs.state_changes)
+            for obs in recent_observations
+        )
+        if not any_progress:
+            return (
+                TAOExit.CLARIFY,
+                f"No real progress in the last {window} rounds; requesting clarification",
             )
         return None
 

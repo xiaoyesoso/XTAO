@@ -63,7 +63,9 @@ from xplan.models.orchestrator import (
     StepExecutionRecord,
 )
 from xplan.models.tao import (
+    ActionAvailability,
     ActionCandidate,
+    ActionFilterRule,
     ActionRecord,
     ActionStatus,
     ActionType,
@@ -161,7 +163,9 @@ __all__ = [
     "OrchestratorResult",
     "StepExecutionRecord",
     # TAO / ReAct
+    "ActionAvailability",
     "ActionCandidate",
+    "ActionFilterRule",
     "ActionRecord",
     "ActionStatus",
     "ActionType",

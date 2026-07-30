@@ -390,6 +390,49 @@ print(result["used_loops"])
 print(result["final_output"])
 ```
 
+#### Action 元数据与筛选
+
+`ActionCandidate` 支持扩展元数据，帮助引擎筛选并选择正确的 Action。可填写 `tags`、`intents`、`applicable_scenarios`、`permissions`、`cost`、`risk`、`alternatives` 等字段描述候选。
+
+```python
+from xplan.models import ActionCandidate, ActionType
+
+candidates = [
+    ActionCandidate(
+        name="query_user_profile",
+        type=ActionType.TOOL_CALL,
+        description="从 CRM 查询用户画像",
+        required_params=["user_id"],
+        tags=["read", "crm"],
+        intents=["personalization"],
+        applicable_scenarios=["已知 user_id 且缺少画像"],
+        inapplicable_scenarios=["缺少 user_id"],
+        permissions=["crm:read"],
+        cost="low",
+        risk="low",
+        alternatives=["ask_user_for_profile"],
+    ),
+    ActionCandidate(
+        name="ask_user_for_profile",
+        type=ActionType.USER_INTERACTION,
+        description="请用户提供画像信息",
+        tags=["user_interaction"],
+        intents=["personalization"],
+        applicable_scenarios=["缺少 user_id 或 CRM 查询失败"],
+        cost="low",
+        risk="low",
+    ),
+]
+
+result = await client.run_tao(
+    user_input="基于用户画像推荐商品",
+    candidate_actions=candidates,
+    max_loops=8,
+)
+```
+
+引擎会先执行确定性筛选（意图、标签、前置条件、权限），再按历史成功率和信息增益排序，最后通过大模型粗筛+精筛选出最佳 Action。
+
 #### `tao_think(state) -> dict`
 `POST /api/tao/think` -- 原子 Think 接口。
 

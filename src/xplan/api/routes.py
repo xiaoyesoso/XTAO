@@ -80,7 +80,12 @@ from xplan.engine import (
     PlanOrchestrator,
     TAOEngine,
 )
-from xplan.engine.tao_action_runtime import IllegalActionError, PreconditionError
+from xplan.engine.tao_action_runtime import (
+    IllegalActionError,
+    ParameterValidationError,
+    PermissionError,
+    PreconditionError,
+)
 from xplan.services import (
     LLMService,
     RAGService,
@@ -1185,7 +1190,7 @@ async def tao_act(
         )
     try:
         record = await tao.action_runtime.execute(candidate, req.params, req.state)
-    except (IllegalActionError, PreconditionError) as e:
+    except (IllegalActionError, PreconditionError, PermissionError, ParameterValidationError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return TAOActResponse(record=record)
 

@@ -2173,6 +2173,65 @@ TAO 是面向步骤级执行的受控状态循环：Plan 定义宏观路径，TA
 
 TAO 也可以通过主编排流程按步骤启用：设置 `OrchestratorConfig.use_tao=true`（见 [2.2.1 主编排入口](#221-主编排入口运行完整-g4c-生命周期)）。
 
+#### Action 设计规范与候选空间筛选
+
+TAO 中的 Action 是面向目标的操作封装，而不是原始工具。良好的 Action 设计直接影响 Think 准确率与循环稳定性。
+
+**设计原则**
+
+| 原则 | 说明 |
+|---|---|
+| 业务完整性 | Action 是一个业务上完整的操作；内部可调用一个工具、多个工具或启动子 Agent。 |
+| 正交性 | Action 之间职责边界清晰，应尽量减少重叠。 |
+| 子 Agent 封装 | 将复杂子任务封装为子 Agent，主 Agent 通过 Action 启动子 Agent。 |
+| 粗粒度反范式 | 当 Action 空间过大时，可设计粗粒度 Action，由其内部逻辑根据参数和上下文决定具体操作，并配合多级筛选。 |
+| 参数/返回值最小化 | 参数应容易获取；返回值只暴露调用方需要的信息，避免过多可能情况导致 Observation 解读困难。 |
+
+**候选 Action 元数据**
+
+`ActionCandidate` 携带扩展元数据，用于支撑筛选和基于证据的决策。除模型参考中的基础字段外，还提供以下字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `applicable_scenarios` | list[string] | 适用场景描述。 |
+| `inapplicable_scenarios` | list[string] | 不适用场景描述。 |
+| `required_params` | list[string] | 必填参数键。 |
+| `optional_params` | list[string] | 可选参数键。 |
+| `cost` | string | 成本估计：`low` / `medium` / `high`。 |
+| `risk` | string | 风险等级：`low` / `medium` / `high`。 |
+| `reversible` | boolean | 是否可回滚。 |
+| `permissions` | list[string] | 所需权限或授权范围。 |
+| `tags` | list[string] | 用于筛选的标签。 |
+| `intents` | list[string] | Action 所属的意图。 |
+| `repeatable_on_retry` | boolean | 重试后是否可能恢复（如网络延迟类 Action）。 |
+| `alternatives` | list[string] | 可替代本 Action 的其他 Action 名称。 |
+
+**筛选流水线**
+
+引擎在每次 Think 前对完整候选空间进行粗筛：
+
+```
+全部 Action → 意图/标签筛选 → 规则引擎 → 前置条件/权限 → 历史成功率 → 信息增益 → 大模型粗筛 → 大模型精筛 → 最终 Action
+```
+
+- 确定性筛选（意图、标签、规则、前置条件、权限）优先执行，当剩余候选数足够少时可短路跳过后续筛选。
+- `ActionFilterRule` 可基于事实、权限或意图包含/排除 Action。
+- `ActionAvailability` 记录历史成功率，用于降低 unreliable Action 的优先级或临时禁用。
+- 信息增益排序优先选择能补足当前缺失槽位的 Action。
+- 大模型粗筛使用 Fast LLM 和少量上下文；精筛使用 Pro LLM 和完整上下文。
+
+**执行前二次校验**
+
+执行选中的 Action 前，运行时会校验：
+- Action 名称是否在当前候选空间中。
+- `required_params` 是否均已提供。
+- 调用方是否拥有所需的 `permissions`。
+- 输入参数是否符合 `params_schema`。
+
+**高可用与权限控制**
+
+Action 支持重试、降级到 `alternatives`、熔断禁用和限流。权限检查可在 Action 封装内实现，也可通过统一的 AOP 层完成。
+
 #### 2.9.1 运行完整 TAO 循环
 
 - **方法与路径**：`POST /api/tao/run`
@@ -2815,6 +2874,18 @@ TAO 运行时聚合状态，在循环各轮之间（以及原子接口多次调�
 | rollbackable | boolean | `true` | 是否可回滚 |
 | estimated_cost | string | `"low"` | 粗略成本估计：`low` / `medium` / `high` |
 | metadata | object | `{}` | 业务元数据（如 `plan_nodes` / `intents` 白名单、`sub_actions`） |
+| applicable_scenarios | list[string] | `[]` | 适用场景描述 |
+| inapplicable_scenarios | list[string] | `[]` | 不适用场景描述 |
+| required_params | list[string] | `[]` | 必填参数键 |
+| optional_params | list[string] | `[]` | 可选参数键 |
+| cost | string | `"low"` | 成本估计：`low` / `medium` / `high` |
+| risk | string | `"low"` | 风险等级：`low` / `medium` / `high` |
+| reversible | boolean | `true` | 是否可回滚 |
+| permissions | list[string] | `[]` | 所需权限或授权范围 |
+| tags | list[string] | `[]` | 用于筛选的标签 |
+| intents | list[string] | `[]` | Action 所属的意图 |
+| repeatable_on_retry | boolean | `false` | 重试后是否可能恢复 |
+| alternatives | list[string] | `[]` | 可替代本 Action 的其他 Action 名称 |
 
 ### 3.10 ActionRecord
 

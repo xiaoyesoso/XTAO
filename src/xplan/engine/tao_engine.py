@@ -160,11 +160,13 @@ class TAOEngine:
             self.supervisor_interval = supervisor_interval
         if supervisor_interval_seconds is not None:
             self.supervisor_interval_seconds = supervisor_interval_seconds
+        # Exclude actions that failed earlier in this step and are not repeatable
+        filtered_candidates = self._exclude_failed_actions(candidate_actions or [])
         state = self.state_manager.initialize(
             user_input=user_input,
             plan=plan,
             candidate_actions=runtime.coarse_filter(
-                candidate_actions or [], plan=plan
+                filtered_candidates, plan=plan
             ),
             max_loops=max_loops,
             max_time=max_time,
@@ -253,6 +255,31 @@ class TAOEngine:
             await self._stop_async_supervisor()
             self.supervisor_interval = previous_interval
             self.supervisor_interval_seconds = previous_interval_seconds
+
+    def _exclude_failed_actions(
+        self, candidates: list[ActionCandidate]
+    ) -> list[ActionCandidate]:
+        """Remove actions that already failed in this step unless repeatable.
+
+        The current implementation tracks failures within the ongoing TAO run
+        via the action runtime's availability records. Actions marked as
+        disabled by the circuit breaker, or actions explicitly recorded as
+        failed and not marked ``repeatable_on_retry``, are excluded from the
+        initial candidate space.
+        """
+        runtime = getattr(self, "_current_runtime", None) or self.action_runtime
+        kept: list[ActionCandidate] = []
+        for candidate in candidates:
+            av = runtime.availability_of(candidate.name)
+            if av.disabled:
+                continue
+            if (
+                av.consecutive_failures > 0
+                and not candidate.repeatable_on_retry
+            ):
+                continue
+            kept.append(candidate)
+        return kept
 
     # ── Single round execution (task 7.1) ─────────────────────
 

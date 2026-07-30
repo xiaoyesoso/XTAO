@@ -7,13 +7,19 @@ Covers:
 - Boundary rules injected into every Think/Observation prompt
 """
 
-from xplan.models.tao import ActionCandidate, TAOState
+from typing import Any
+
+from xplan.models.tao import ActionCandidate, TAOState, FactCategory, ActionStatus
 
 
 # ── Boundary rules (design decision 11) ───────────────────────
 
 BOUNDARY_RULES: list[str] = [
     "You may ONLY choose from the candidate actions provided. Never invent new tools or actions.",
+    "Action selection must be evidence-based: output a reason that references specific facts, constraints, or success criteria from the context.",
+    "Respect the applicable_scenarios and inapplicable_scenarios of each candidate action. Never select an action whose inapplicable_scenarios match the current context.",
+    "When an action has been attempted recently and failed without new information, do NOT select it again unless it is explicitly marked as repeatable_on_retry.",
+    "Prefer actions that maximize information gain when critical facts are missing.",
     "Never skip unsatisfied hard preconditions. Distinguish mandatory preconditions from nice-to-have ones.",
     "Never upgrade assumptions or speculation to facts. Facts must be explicitly marked as assumption, inference or confirmed fact.",
     "Every fact and state change must be bound to evidence (an action_id, tool output or user input).",
@@ -112,11 +118,79 @@ You are the Think engine of a TAO (Think-Action-Observation) controlled state lo
 ```"""
 
 
-def build_tao_think_user_prompt(state: TAOState) -> str:
+def build_action_candidate_description(candidate: ActionCandidate) -> str:
+    """Build a rich description of a candidate action for the Think prompt."""
+    parts: list[str] = [
+        f"type={candidate.type.value}",
+        f"description={candidate.description}",
+    ]
+    if candidate.applicable_scenarios:
+        parts.append(f"applicable_scenarios={candidate.applicable_scenarios}")
+    if candidate.inapplicable_scenarios:
+        parts.append(f"inapplicable_scenarios={candidate.inapplicable_scenarios}")
+    if candidate.required_params:
+        parts.append(f"required_params={candidate.required_params}")
+    if candidate.optional_params:
+        parts.append(f"optional_params={candidate.optional_params}")
+    if candidate.preconditions:
+        parts.append(f"preconditions={candidate.preconditions}")
+    if candidate.cost:
+        parts.append(f"cost={candidate.cost}")
+    if candidate.risk:
+        parts.append(f"risk={candidate.risk}")
+    if candidate.permissions:
+        parts.append(f"permissions={candidate.permissions}")
+    if candidate.tags:
+        parts.append(f"tags={candidate.tags}")
+    if candidate.intents:
+        parts.append(f"intents={candidate.intents}")
+    if candidate.repeatable_on_retry:
+        parts.append("repeatable_on_retry=true")
+    if candidate.alternatives:
+        parts.append(f"alternatives={candidate.alternatives}")
+    return f"- {candidate.name}: {', '.join(parts)}"
+
+
+def build_action_few_shot_examples(
+    candidate: ActionCandidate,
+    examples: dict[str, list[dict[str, Any]]] | None = None,
+) -> str:
+    """Build few-shot examples for a candidate action.
+
+    Args:
+        candidate: The candidate action
+        examples: Mapping from action name to a list of example dicts.
+            Each example dict has keys: scenario, selected, reason.
+
+    Returns:
+        Example text or an empty string when no examples exist
+    """
+    if examples is None:
+        return ""
+    action_examples = examples.get(candidate.name, [])
+    if not action_examples:
+        return ""
+    lines: list[str] = ["  examples:"]
+    for ex in action_examples:
+        scenario = ex.get("scenario", "")
+        selected = ex.get("selected", "")
+        reason = ex.get("reason", "")
+        label = "CORRECT" if selected == candidate.name else "INCORRECT"
+        lines.append(f"    - [{label}] scenario: {scenario}")
+        lines.append(f"      selected: {selected}")
+        lines.append(f"      reason: {reason}")
+    return "\n".join(lines)
+
+
+def build_tao_think_user_prompt(
+    state: TAOState,
+    few_shot_examples: dict[str, list[dict[str, Any]]] | None = None,
+) -> str:
     """Build the Think user prompt from the current TAO state.
 
     Args:
         state: Current TAO runtime state
+        few_shot_examples: Optional examples for candidate actions
 
     Returns:
         Think user prompt text
@@ -124,21 +198,39 @@ def build_tao_think_user_prompt(state: TAOState) -> str:
     goal = state.goal_state
     criteria = "\n".join(f"- {c}" for c in goal.success_criteria) or "- (none)"
 
-    fact_lines: list[str] = []
-    for f in state.facts.values():
-        value_text = f.value if f.value is not None else "(missing)"
-        evidence = f", evidence: {f.evidence}" if f.evidence else ""
-        fact_lines.append(f"- [{f.category.value}] {f.key}: {value_text}{evidence}")
-    facts_text = "\n".join(fact_lines) or "- (no facts yet)"
+    # Fact State: preserve categorical separation to prevent speculation drift
+    confirmed_facts = [
+        f"- [{f.category.value}] {f.key}: {f.value if f.value is not None else '(missing)'}"
+        + (f" (evidence: {f.evidence})" if f.evidence else "")
+        for f in state.facts.values()
+        if f.category in (FactCategory.CONFIRMED, FactCategory.USER_APPROVED)
+    ]
+    speculative_facts = [
+        f"- [{f.category.value}] {f.key}: {f.value if f.value is not None else '(missing)'}"
+        + (f" (evidence: {f.evidence})" if f.evidence else "")
+        for f in state.facts.values()
+        if f.category == FactCategory.SPECULATIVE
+    ]
+    missing_facts = [
+        f"- [missing] {key}"
+        for key in state.missing_slots()
+    ]
+    facts_text = (
+        "\n".join(confirmed_facts + speculative_facts + missing_facts)
+        or "- (no facts yet)"
+    )
 
+    # Candidate Actions with rich metadata
     candidate_lines: list[str] = []
     for c in state.candidate_actions:
-        pre = f", preconditions: {c.preconditions}" if c.preconditions else ""
-        candidate_lines.append(
-            f"- {c.name} ({c.type.value}): {c.description}{pre}, rollbackable={c.rollbackable}"
-        )
+        desc = build_action_candidate_description(c)
+        examples_text = build_action_few_shot_examples(c, few_shot_examples)
+        candidate_lines.append(desc)
+        if examples_text:
+            candidate_lines.append(examples_text)
     candidates_text = "\n".join(candidate_lines) or "- (no candidate actions)"
 
+    # Action State: recent history with outcome and progress
     history_lines: list[str] = []
     for record in state.actions[-5:]:
         obs = next(
@@ -146,10 +238,23 @@ def build_tao_think_user_prompt(state: TAOState) -> str:
             None,
         )
         obs_text = f" -> {obs.summary}" if obs and obs.summary else ""
+        gain_text = ""
+        if obs:
+            gain_text = f", gain={obs.information_gain.value}, progress={obs.progress}"
         history_lines.append(
-            f"- {record.action_id} {record.name}: {record.status.value}{obs_text}"
+            f"- {record.action_id} {record.name}: {record.status.value}{gain_text}{obs_text}"
         )
     history_text = "\n".join(history_lines) or "- (no actions executed yet)"
+
+    # Observation State summary
+    observation_lines: list[str] = []
+    for obs in state.observations[-3:]:
+        observation_lines.append(
+            f"- {obs.action_id}: status={obs.execution_status.value}, "
+            f"new_facts={len(obs.new_facts)}, missing={obs.missing_information}, "
+            f"progress={obs.progress}, gain={obs.information_gain.value}"
+        )
+    observations_text = "\n".join(observation_lines) or "- (no observations yet)"
 
     return f"""# Current TAO State
 
@@ -163,14 +268,18 @@ def build_tao_think_user_prompt(state: TAOState) -> str:
 ## Fact State
 {facts_text}
 
+## Observation State (latest 3)
+{observations_text}
+
+## Action State / Recent History (latest 5)
+{history_text}
+
 ## Candidate Actions (coarse-filtered, choose ONLY from these)
 {candidates_text}
 
-## Recent Action/Observation History (latest 5)
-{history_text}
-
 ## Control State
 - used_loops: {state.control.used_loops} / max_loops: {state.control.max_loops}
+- max_time: {state.control.max_time}s
 
 Complete the five judgments and output the JSON object."""
 

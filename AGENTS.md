@@ -6,7 +6,7 @@ This file provides project context and working guidelines for AI agents.
 
 XPlan is an Agent Plan mechanism built on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction). The core objective is to elevate Plan from a "step list" to a "checkable, correctable, executable runtime object," systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
 
-The project also implements a **Replan mechanism** (trigger detection, code+LLM dual judgment, three granularity levels, evidence-based prompt design) and an optional **TCC Replan** advanced scheme (Try/Confirm/Cancel).
+The project also implements a **Replan mechanism** (trigger detection, code+LLM dual judgment, three granularity levels, evidence-based prompt design), an optional **TCC Replan** advanced scheme (Try/Confirm/Cancel), and a **TAO (Think-Action-Observation) / ReAct execution engine** with Action design guidelines, multi-dimensional candidate filtering, loop safety, and high-availability wrappers.
 
 ## Project Structure
 
@@ -48,8 +48,9 @@ XPlan/
 │       │   ├── tcc.py                     # TCCPhase, TryValidation, TryResult, ConfirmResult, CancelResult
 │       │   ├── backtracking.py            # BacktrackingLevel, CandidatePath, JumpRule, CrossTurnContamination
 │       │   ├── trust_state.py             # FactEntry, TrustState, TrustStateReport
-│       │   ├── tracing.py                 # TracingPoint, FailureTracingResult, StepRecord
-│       │   └── orchestrator.py            # OrchestratorConfig, OrchestratorResult, StepExecutionRecord
+│       │   ├── tracing.py                 # TracingPoint / FailureTracingResult / StepRecord
+│       │   ├── tao.py                     # TAO models: TAOState, ThinkResult, ActionCandidate, ActionAvailability, ActionFilterRule
+│       │   └── orchestrator.py            # OrchestratorConfig / OrchestratorResult / StepExecutionRecord
 │       ├── prompts/                       # Prompt modules (one per G4C element)
 │       │   ├── __init__.py
 │       │   ├── goal_prompt.py             # Goal prompt (structured output + adjective standards + RAG)
@@ -61,11 +62,12 @@ XPlan/
 │       │   ├── replan_prompt.py           # Replan prompt (G4C context + constraints + evidence-based)
 │       │   ├── tcc_prompt.py              # TCC prompt (Try/Confirm/Cancel 3-phase)
 │       │   ├── tracing_prompt.py          # Failure tracing prompt
+│       │   ├── tao_prompt.py              # TAO Think prompt (evidence-based action selection + loop safety)
 │       │   ├── aggregator.py              # Aggregates all 5 module prompts
 │       │   └── constants.py               # Shared constants
 │       ├── services/                      # Service layer
 │       │   ├── __init__.py
-│       │   ├── llm_service.py             # LLMService (httpx async, OpenAI-compatible, retry)
+│       │   ├── llm_service.py             # LLMService (httpx async, OpenAI-compatible, retry incl. SSL errors)
 │       │   ├── rag_service.py             # RAGService (knowledge base retrieval)
 │       │   ├── constraint_manager.py      # ConstraintManager (hard/soft, user-evidence required)
 │       │   ├── trust_state_manager.py     # TrustStateManager (5 states + cascade marking)
@@ -83,7 +85,14 @@ XPlan/
 │       │   ├── backtracking_engine.py     # BacktrackingEngine (5 levels + progressive expansion)
 │       │   ├── cross_turn_tracker.py      # CrossTurnTracker (cross-turn contamination tracking)
 │       │   ├── failure_tracer.py          # FailureTracer (failure backtracking + root cause localization)
-│       │   └── orchestrator.py            # PlanOrchestrator (main entrypoint engine)
+│       │   ├── orchestrator.py            # PlanOrchestrator (main entrypoint engine)
+│       │   ├── tao_engine.py              # TAOEngine (Think-Action-Observation controlled state loop)
+│       │   ├── tao_think_engine.py        # TAOThinkEngine (five structured judgments)
+│       │   ├── tao_action_runtime.py      # TAOActionRuntime (candidate filtering, execution guards, HA wrappers)
+│       │   ├── tao_observation_interpreter.py # Observation interpreter (evidence-bound fact extraction)
+│       │   ├── tao_loop_controller.py     # TAOLoopController (loop exit + dead-loop/stagnation detection)
+│       │   ├── tao_massive_action_filter.py # MassiveActionFilter (multi-stage candidate filtering)
+│       │   └── tao_state_manager.py       # TAOStateManager (runtime state persistence)
 │       ├── sdk/                           # Python SDK (client for the REST API)
 │       │   ├── __init__.py                # Public exports: XPlanClient + exceptions
 │       │   ├── client.py                  # XPlanClient (async, httpx-based, all endpoints)
@@ -93,11 +102,16 @@ XPlan/
 │           ├── metrics.py                 # PlanMetrics (Prometheus counters/gauges/histograms)
 │           ├── offline_analyzer.py        # OfflineAnalyzer (G4C 5-dimension offline analysis)
 │           ├── replan_evaluator.py        # ReplanEvaluator (5 metrics: root cause / replan start / reuse / recovery / oscillation)
-│           └── user_correction_detector.py # UserCorrectionDetector (keyword + LLM detection)
+│           ├── user_correction_detector.py # UserCorrectionDetector (keyword + LLM detection)
+│           └── tao_evaluator.py           # TAOEvaluator (Think/Action/Observation/Overall metrics)
 ├── tests/
 │   ├── __init__.py
-│   ├── test_plan.py                       # Unit tests (20 tests, all passing)
-│   └── test_live.py                       # Live LLM integration test
+│   ├── test_plan.py                       # Unit tests (G4C core)
+│   ├── test_tao.py                        # Unit tests (TAO models, engine, filtering, loop safety)
+│   ├── test_backtracking.py               # Unit tests (backtracking engine)
+│   ├── test_tracing.py                    # Unit tests (failure tracing)
+│   ├── test_live.py                       # Live LLM integration test
+│   └── test_tao_live.py                   # Live TAO end-to-end test
 ├── .trae/                                 # OpenSpec Trae skills (not in git)
 ├── openspec/                              # OpenSpec specs and changes (not in git)
 └── 规划执行/                               # Original requirement documents (not in git)
@@ -192,6 +206,22 @@ Borrowed from distributed transaction TCC, applicable only to high-failure-cost,
 | **Confirm** | Execute Plan + write Try results to context | Reuse Try data where possible |
 | **Cancel** | Rollback Try temp state + mark failed assumptions + decide Replan or abort | Try data in temp space, not in Context |
 
+## TAO / ReAct Execution Engine
+
+TAO (Think-Action-Observation) is a step-level controlled state loop. The Plan defines the macro path; TAO decides how each concrete step moves forward and interprets feedback.
+
+### Key Concepts
+
+- **Five runtime states**: Goal State, Action State, Observation State, Fact State, Control State.
+- **Five Think judgments**: goal, state, path, stop, risk.
+- **Action design**: Actions are goal-oriented wrappers, not raw tools. Design principles include business completeness, orthogonality, sub-agent encapsulation, and minimal params/returns.
+- **Action metadata**: `ActionCandidate` carries `tags`, `intents`, `applicable_scenarios`, `inapplicable_scenarios`, `permissions`, `cost`, `risk`, `reversible`, `repeatable_on_retry`, and `alternatives` to support filtering and evidence-based selection.
+- **Multi-dimensional filtering**: intent/tag filter → rule engine (`ActionFilterRule`) → preconditions/permissions → historical success rate (`ActionAvailability`) → information gain → LLM coarse filter (Fast LLM) → LLM fine filter (Pro LLM).
+- **Execution guards**: candidate-space check, required params check, permission check, params-schema check.
+- **High availability**: retry, fallback to alternatives, circuit breaker, rate limiting.
+- **Loop safety**: max loops / max time, dead-loop detection, stagnation detection, exclude already-failed actions unless `repeatable_on_retry`.
+- **TAO evaluation**: Think/Action/Observation/Overall four-layer metrics with LLM-as-judge and golden-answer comparison.
+
 ## API Endpoints
 
 All routes are prefixed with `/api`. `POST /api/plan/run` is the **primary entry point** that internally orchestrates the full G4C lifecycle (generate → verify → execute → correct, including failure tracing, trust state, backtracking, replan, and evaluation). The remaining endpoints expose the individual subsystems for granular control.
@@ -233,6 +263,12 @@ All routes are prefixed with `/api`. `POST /api/plan/run` is the **primary entry
 | POST | `/api/tao/think` | Atomic TAO Think (five structured judgments + exit decision) |
 | POST | `/api/tao/act` | Atomic TAO Action execution (candidate space enforced) |
 | POST | `/api/tao/observe` | Atomic TAO Observation interpretation (evidence-bound facts) |
+| POST | `/api/evaluation/tao/event` | Record a TAO evaluation event |
+| GET | `/api/evaluation/tao/metrics` | Get TAO evaluation metrics (Think/Action/Observation/Overall) |
+| GET | `/api/evaluation/tao/report` | Get TAO evaluation report with suggestions |
+| POST | `/api/evaluation/tao/annotate` | Import golden-answer annotations for TAO |
+| GET | `/api/evaluation/tao/test-set` | Export TAO evaluation test set |
+| POST | `/api/evaluation/tao/judge` | Run LLM-as-judge on a single TAO round |
 
 ## Python SDK
 
@@ -280,7 +316,7 @@ SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md
 - **Models**: Use Pydantic v2 for all data models
 - **Async**: Use async/await throughout; LLM calls use `llm_service.chat(system_prompt, user_prompt)`
 - **SDK**: The SDK (`xplan.sdk`) is async-only, reuses `xplan.models` for request/response payloads, and raises `XPlanError` subclasses on failure. All failures must surface as typed exceptions — never swallow errors silently.
-- **Testing**: Run `python -m pytest tests/test_plan.py -v` to verify (20 tests, all passing)
+- **Testing**: Run `python -m pytest tests/test_plan.py tests/test_tao.py tests/test_backtracking.py tests/test_tracing.py -v` to verify (64+ tests, all passing)
 
 ## Docker Deployment
 
@@ -299,8 +335,9 @@ docker run -p 8000:8000 --env-file .env xplan
 ## Current Status
 
 - Change `agent-plan-g4c`: **all tasks complete** (proposal → specs → design → tasks → implement)
-- Core engine fully implemented: G4C generation, verification, execution, correction, Replan, TCC Replan, failure tracing, trust state, backtracking (5 levels), candidate paths, cross-turn tracking, and the `PlanOrchestrator` main entry point
+- Change `agent-plan-tao-action-selection`: **all tasks complete** (proposal → specs → design → tasks → implement)
+- Core engine fully implemented: G4C generation, verification, execution, correction, Replan, TCC Replan, failure tracing, trust state, backtracking (5 levels), candidate paths, cross-turn tracking, TAO/ReAct execution engine, and the `PlanOrchestrator` main entry point
 - Python SDK shipped (`xplan.sdk.XPlanClient`) with full live-server end-to-end verification
 - Docs: bilingual README (`README.md` / `README_zh.md`), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`)
-- 20 unit tests passing
+- 64 unit tests passing (`tests/test_plan.py` + `tests/test_tao.py`)
 - Live LLM integration tested with SiliconFlow DeepSeek

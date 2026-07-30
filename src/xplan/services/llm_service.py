@@ -5,6 +5,7 @@ Uses httpx to asynchronously call OpenAI-compatible API, supports retry (up to 3
 
 import asyncio
 import logging
+import ssl
 
 import httpx
 
@@ -103,7 +104,7 @@ class LLMService:
                     attempt,
                     self.max_retries,
                 )
-            except (httpx.RequestError, KeyError, IndexError) as e:
+            except (httpx.RequestError, ssl.SSLError, KeyError, IndexError) as e:
                 last_error = e
                 logger.warning(
                     "LLM call failed (%s), attempt %d/%d",
