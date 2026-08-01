@@ -1,6 +1,6 @@
 # 我把 Agent 的 Plan 做成了「运行时对象」，它终于不会在半路上自己跑偏了
 
-> **编者按**，本文来自一个真实开源项目的复盘，写的是一套叫 **XPlan** 的 Agent Plan 机制。读完这篇，你会对「为什么 Agent 做着做着就偏了」「怎么让 Plan 自己知道错了还知道怎么改」有一个完全不一样的理解。
+> **编者按**，本文来自一个真实开源项目的复盘，写的是一套叫 **XTAO** 的 Agent Plan 机制。读完这篇，你会对「为什么 Agent 做着做着就偏了」「怎么让 Plan 自己知道错了还知道怎么改」有一个完全不一样的理解。
 
 ---
 
@@ -18,7 +18,7 @@
 
 我们太习惯把 Plan 当成一个「步骤列表」去执行，只要有一步走不通，就局部修一下。但真正的麻烦不是某一步报错，而是前面某一步已经悄悄错了，后面的所有步骤都在这个错的地基上继续盖楼。等到大楼塌了，你才发现地基有问题。
 
-所以，我设计 XPlan 的时候，有一个最核心的假设，
+所以，我设计 XTAO 的时候，有一个最核心的假设，
 
 **Plan 不应该是一个步骤列表，而应该是一个可检查、可纠偏、可执行的运行时对象。**
 
@@ -44,10 +44,10 @@
 
 五个问题回答完，Plan 才从「看上去合理」变成「真的能跑」。
 
-在 XPlan 的代码里，这五个要素被固化成 Pydantic 模型，下面这一段是 Plan 复合对象的核心结构，
+在 XTAO 的代码里，这五个要素被固化成 Pydantic 模型，下面这一段是 Plan 复合对象的核心结构，
 
 ```python
-from xplan.models import Goal, Context, Choice, Checkpoint, Correction
+from xtao.models import Goal, Context, Choice, Checkpoint, Correction
 
 class Plan(BaseModel):
     """Plan runtime object, contains five G4C elements.
@@ -78,7 +78,7 @@ Plan 再完美，也架不住执行时遇到意外。用户临时加需求、工
 
 传统的做法是什么？重试。重试三次不行就报错，让用户自己想办法。
 
-但这太浪费了。很多错误不是不能修，而是不知道怎么修。XPlan 的做法是 **Replan，可控修正**。
+但这太浪费了。很多错误不是不能修，而是不知道怎么修。XTAO 的做法是 **Replan，可控修正**。
 
 它的流程分成两个明确的阶段，**判定阶段** 和 **执行阶段**。
 
@@ -127,7 +127,7 @@ class ReplanEngine:
 
 ### 执行阶段：三种粒度，能轻则轻
 
-LLM 判定完，进入执行阶段。XPlan 把 Replan 分成三种粒度，
+LLM 判定完，进入执行阶段。XTAO 把 Replan 分成三种粒度，
 
 **Step Replan**。只改当前这一步，前面的结果全部保留。成本最低。
 
@@ -160,7 +160,7 @@ class ReplanResult(BaseModel):
 
 回到开头那个 PDF 的例子。
 
-格式化那一步报错了，但我真正需要知道的是，这个错误是从哪一步开始引入的。XPlan 的 **FailureTracer** 就是干这个事的。
+格式化那一步报错了，但我真正需要知道的是，这个错误是从哪一步开始引入的。XTAO 的 **FailureTracer** 就是干这个事的。
 
 它的核心假设是，**失败点 ≠ 根因点 ≠ 回滚点 ≠ Replan 起点。**
 
@@ -188,7 +188,7 @@ LLM 做的事情包括，
 - 分析约束影响。
 - 判断中间结果能否复用。
 
-在 XPlan 里，调用一次回溯只需要一个请求，
+在 XTAO 里，调用一次回溯只需要一个请求，
 
 ```python
 async def trace(
@@ -221,7 +221,7 @@ async def trace(
 
 Plan 执行过程中会产生大量中间结果，比如「PDF 有 3 页」「文本长度 4500 字符」「摘要包含 5 个要点」。这些结果不是生下来就平等的。
 
-XPlan 给每个中间结果打了一个 **信任状态**，
+XTAO 给每个中间结果打了一个 **信任状态**，
 
 ![信任状态图](images/trust_states.png)
 
@@ -270,7 +270,7 @@ class TrustStateManager:
 
 有些场景，不能一上来就真刀真枪地执行。比如涉及资金转账、文件删除、公开发布这种操作，一旦错了代价很高。
 
-XPlan 提供了一个可选的高级机制，**TCC Replan**，借鉴了分布式事务的 Try / Confirm / Cancel 思想。
+XTAO 提供了一个可选的高级机制，**TCC Replan**，借鉴了分布式事务的 Try / Confirm / Cancel 思想。
 
 ![TCC Replan 图](images/tcc_replan.png)
 
@@ -282,13 +282,13 @@ XPlan 提供了一个可选的高级机制，**TCC Replan**，借鉴了分布式
 
 **Cancel**。如果 Try 失败，直接丢弃临时空间的数据，在 Context 里标记失败的假设，然后决定是继续 Replan 还是 Abort。
 
-TCC 默认是关闭的，只有显式开启才会生效。这符合 XPlan 的设计哲学，**简单场景用简单方案，复杂场景才加复杂方案。**
+TCC 默认是关闭的，只有显式开启才会生效。这符合 XTAO 的设计哲学，**简单场景用简单方案，复杂场景才加复杂方案。**
 
 ---
 
 ## 七、主入口 /api/plan/run，把整个生命周期串起来
 
-XPlan 对外暴露了 30 多个 REST 接口，但真正推荐用的是 **POST /api/plan/run**。它是一个主入口，内部把生成、评估、执行、纠偏全部串起来。
+XTAO 对外暴露了 30 多个 REST 接口，但真正推荐用的是 **POST /api/plan/run**。它是一个主入口，内部把生成、评估、执行、纠偏全部串起来。
 
 流程大概是这样，
 
@@ -311,9 +311,9 @@ XPlan 对外暴露了 30 多个 REST 接口，但真正推荐用的是 **POST /a
 如果你想自己控制每一步，也可以直接调用下面的原子接口，
 
 ```python
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
-async with XPlanClient(base_url="http://localhost:8000") as client:
+async with XTAOClient(base_url="http://localhost:8000") as client:
     # One-shot full lifecycle
     result = await client.run_plan(
         user_input="Summarize the 3-page report into 5 bullets",
@@ -325,13 +325,13 @@ async with XPlanClient(base_url="http://localhost:8000") as client:
     score = await client.verify_plan(plan)
 ```
 
-SDK 复用了 `xplan.models` 里的 Pydantic 模型，所以你可以直接传模型实例，不用手写 JSON。
+SDK 复用了 `xtao.models` 里的 Pydantic 模型，所以你可以直接传模型实例，不用手写 JSON。
 
 ---
 
 ## 八、Replan 效果怎么评估？
 
-修好了不等于修对了。XPlan 给 Replan 设计了五维评估指标，
+修好了不等于修对了。XTAO 给 Replan 设计了五维评估指标，
 
 - **根因定位准确率**，FailureTracer 找根因点找得准不准。
 - **Replan 起点准确率**，从哪一步开始重规划是否合理。
@@ -351,7 +351,7 @@ SDK 复用了 `xplan.models` 里的 Pydantic 模型，所以你可以直接传�
 
 传统的做法是，拿到步骤目标，直接调工具，拿到结果，走下一步。这就像蒙着眼睛走路--走到哪算哪，出了问题也不知道是哪一步偏了。
 
-XPlan 引入了 **TAO（Think-Action-Observation）** 循环来解决这个问题。
+XTAO 引入了 **TAO（Think-Action-Observation）** 循环来解决这个问题。
 
 ### 五类结构化判断，每一步都想清楚
 
@@ -458,7 +458,7 @@ class TAOEngine:
 
 所以 Plan 不能是一份死的剧本。它必须是一份活的、能自我感知的运行时对象。
 
-XPlan 想做的就是这样一件事。G4C 让它想清楚，Checkpoint 让它能感知，Replan 让它能修正，FailureTracer 让它能找到真正的根因，TrustStateManager 让它知道哪些结果还能信。
+XTAO 想做的就是这样一件事。G4C 让它想清楚，Checkpoint 让它能感知，Replan 让它能修正，FailureTracer 让它能找到真正的根因，TrustStateManager 让它知道哪些结果还能信。
 
 这些机制加在一起，Agent 才不会在错误的路上越跑越远。
 
@@ -466,9 +466,9 @@ XPlan 想做的就是这样一件事。G4C 让它想清楚，Checkpoint 让它�
 
 ## 十一、如果你想试试
 
-XPlan 已经开源，项目地址在这里，
+XTAO 已经开源，项目地址在这里，
 
-> GitHub https://github.com/xiaoyesoso/XPlan
+> GitHub https://github.com/xiaoyesoso/XTAO
 
 启动服务很简单，
 
@@ -481,7 +481,7 @@ cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-python -m uvicorn xplan.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
 ```
 
 然后就可以用 SDK 或者 curl 调用 `/api/plan/run`。
@@ -492,7 +492,7 @@ python -m uvicorn xplan.main:app --host 0.0.0.0 --port 8000
 
 这套方案不是万能的。它让 Plan 更鲁棒，但没有让 Agent 变得更聪明。真正决定上限的，还是 Goal 定义得清不清楚，Context 给得全不全，LLM 的判断稳不稳定。
 
-但我也确实觉得，比起之前那种「生成一份步骤列表然后祈祷它能跑完」的做法，XPlan 至少让 Agent 在执行过程中有了一张地图、一套体检机制、和一个急救包。
+但我也确实觉得，比起之前那种「生成一份步骤列表然后祈祷它能跑完」的做法，XTAO 至少让 Agent 在执行过程中有了一张地图、一套体检机制、和一个急救包。
 
 它不是让 Plan 不再失败，而是让 Plan 在失败时知道自己在哪，以及该怎么回到正轨。
 

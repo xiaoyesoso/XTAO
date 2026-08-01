@@ -1,7 +1,7 @@
 """失败回溯与根因定位模块验证测试。"""
 import pytest
 
-from xplan.models import (
+from xtao.models import (
     TracingPoint,
     FailureTracingResult,
     StepRecord,
@@ -13,11 +13,11 @@ from xplan.models import (
     Checkpoint,
     PlanMode,
 )
-from xplan.prompts import (
+from xtao.prompts import (
     build_tracing_system_prompt,
     build_tracing_user_prompt,
 )
-from xplan.engine import FailureTracer
+from xtao.engine import FailureTracer
 
 
 class TestTracingModels:
@@ -66,12 +66,12 @@ class TestTracingPrompts:
     def test_system_prompt_content(self):
         """系统提示词包含关键概念。"""
         prompt = build_tracing_system_prompt()
-        assert "失败点" in prompt
-        assert "根因点" in prompt
-        assert "回滚点" in prompt
-        assert "Replan 起点" in prompt
-        assert "反向排查清单" in prompt
-        assert "Checkpoint 可靠性" in prompt
+        assert "failure point" in prompt.lower()
+        assert "root cause point" in prompt.lower()
+        assert "rollback point" in prompt.lower()
+        assert "replan start point" in prompt.lower()
+        assert "reverse investigation" in prompt.lower()
+        assert "checkpoint reliability" in prompt.lower()
 
     def test_user_prompt_content(self):
         """用户提示词包含输入信息。"""
@@ -81,7 +81,7 @@ class TestTracingPrompts:
             step_records_json='[{"step_id": "s3"}]',
         )
         assert "步骤 s3 执行失败" in prompt
-        assert "失败回溯" in prompt
+        assert "failure backtracking" in prompt.lower()
 
 
 class TestFailureTracer:
@@ -157,7 +157,7 @@ class TestFailureTracer:
         chain = tracer.build_tracing_chain(linear_plan, "s3", records)
         assert len(chain) == 3
         assert chain[0].step_id == "s3"
-        assert "失败点" in chain[0].reason
+        assert "failure point" in chain[0].reason.lower()
         assert chain[0].error == "执行失败"
         assert chain[0].action == "tool3"
 

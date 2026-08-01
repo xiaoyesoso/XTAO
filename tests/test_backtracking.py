@@ -1,7 +1,7 @@
 """回溯模块基本功能测试。"""
 import pytest
 
-from xplan.models import (
+from xtao.models import (
     BacktrackingLevel,
     BacktrackingResult,
     CandidatePath,
@@ -10,8 +10,8 @@ from xplan.models import (
     FailurePathRecord,
     JumpRule,
 )
-from xplan.services import CandidatePathManager
-from xplan.engine import BacktrackingEngine, CrossTurnTracker
+from xtao.services import CandidatePathManager
+from xtao.engine import BacktrackingEngine, CrossTurnTracker
 
 
 class TestBacktrackingModels:

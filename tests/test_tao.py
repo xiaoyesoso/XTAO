@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from xplan.models import (
+from xtao.models import (
     ActionCandidate,
     ActionRecord,
     ActionStatus,
@@ -38,22 +38,22 @@ from xplan.models import (
     TAOState,
     ThinkResult,
 )
-from xplan.models.choice import Choice, Step
-from xplan.models.goal import Goal
-from xplan.engine.tao_engine import TAOEngine
-from xplan.engine.tao_think_engine import TAOThinkEngine
-from xplan.engine.tao_action_runtime import (
+from xtao.models.choice import Choice, Step
+from xtao.models.goal import Goal
+from xtao.engine.tao_engine import TAOEngine
+from xtao.engine.tao_think_engine import TAOThinkEngine
+from xtao.engine.tao_action_runtime import (
     IllegalActionError,
     ParameterValidationError,
     PermissionError,
     PreconditionError,
     TAOActionRuntime,
 )
-from xplan.engine.tao_massive_action_filter import MassiveActionFilter
-from xplan.models import ActionAvailability, ActionFilterRule
-from xplan.engine.tao_observation_interpreter import TAOObservationInterpreter
-from xplan.engine.tao_loop_controller import TAOLoopController
-from xplan.services.tao_state_manager import TAOStateManager
+from xtao.engine.tao_massive_action_filter import MassiveActionFilter
+from xtao.models import ActionAvailability, ActionFilterRule
+from xtao.engine.tao_observation_interpreter import TAOObservationInterpreter
+from xtao.engine.tao_loop_controller import TAOLoopController
+from xtao.services.tao_state_manager import TAOStateManager
 
 
 # ── Helpers ─────────────────────────────────────────────────
@@ -795,7 +795,7 @@ class TestTAOEngine:
                 json.dumps(  # supervisor review
                     {
                         "goal_drift": True,
-                        "drift_explanation": "drift",
+                        "drift_extaoation": "drift",
                         "constraint_violations": [],
                         "stagnation": False,
                         "intervention": "replan",
@@ -826,7 +826,7 @@ class TestTAOEngine:
                 json.dumps(
                     {
                         "goal_drift": False,
-                        "drift_explanation": "",
+                        "drift_extaoation": "",
                         "constraint_violations": [],
                         "stagnation": True,
                         "intervention": "replan",
@@ -864,8 +864,8 @@ class TestTAOIntegration:
 
     async def test_orchestrator_use_tao(self):
         """Orchestrator can execute a Plan step via TAO."""
-        from xplan.engine.orchestrator import PlanOrchestrator
-        from xplan.models.orchestrator import OrchestratorConfig
+        from xtao.engine.orchestrator import PlanOrchestrator
+        from xtao.models.orchestrator import OrchestratorConfig
 
         plan_json = json.dumps(
             {
@@ -939,7 +939,7 @@ class TestTAOEvaluator:
 
     def test_record_event_from_result(self):
         """Evaluator builds an event from a TAOResult."""
-        from xplan.evaluation import TAOEvaluator
+        from xtao.evaluation import TAOEvaluator
 
         evaluator = TAOEvaluator()
         state = TAOState(
@@ -968,8 +968,8 @@ class TestTAOEvaluator:
 
     def test_metrics_with_golden_answer(self):
         """Metrics incorporate golden answer comparisons."""
-        from xplan.evaluation import TAOEvaluator
-        from xplan.models.tao_evaluation import GoldenAnswer, ThinkRoundEvaluation
+        from xtao.evaluation import TAOEvaluator
+        from xtao.models.tao_evaluation import GoldenAnswer, ThinkRoundEvaluation
 
         evaluator = TAOEvaluator()
         event = evaluator.record_from_result(
@@ -1000,7 +1000,7 @@ class TestTAOEvaluator:
 
     def test_report_suggests_optimizations(self):
         """Report generates suggestions when metrics are below thresholds."""
-        from xplan.evaluation import TAOEvaluator
+        from xtao.evaluation import TAOEvaluator
 
         evaluator = TAOEvaluator()
         # Record a failing event with many loops to trigger suggestions

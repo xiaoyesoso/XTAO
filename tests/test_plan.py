@@ -5,7 +5,7 @@
 
 import pytest
 
-from xplan.models import (
+from xtao.models import (
     Plan,
     PlanMode,
     PlanStatus,
@@ -24,8 +24,8 @@ from xplan.models import (
     DAGEdge,
     DAGPlan,
 )
-from xplan.engine import DAGValidator
-from xplan.evaluation import OfflineAnalyzer
+from xtao.engine import DAGValidator
+from xtao.evaluation import OfflineAnalyzer
 
 
 # ── G4C 数据模型测试 ───────────────────────────────────────

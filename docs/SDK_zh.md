@@ -1,13 +1,13 @@
-# XPlan Python SDK（中文）
+# XTAO Python SDK（中文）
 
-> XPlan G4C Plan 服务的 Pythonic、类型安全的异步客户端。
+> XTAO G4C Plan 服务的 Pythonic、类型安全的异步客户端。
 
-SDK 封装了 XPlan FastAPI 服务暴露的全部 REST 接口，并复用 `xplan.models`
+SDK 封装了 XTAO FastAPI 服务暴露的全部 REST 接口，并复用 `xtao.models`
 中的 Pydantic 模型，调用方可直接传入模型实例，无需手动处理 JSON。
 
 - **异步优先**：基于 `httpx.AsyncClient` 构建，与 FastAPI / 异步代码库无缝配合。
 - **类型安全**：入参和返回值均为 Pydantic 模型 / 类型化字典。
-- **统一错误**：所有失败均抛出 `XPlanError` 的子类。
+- **统一错误**：所有失败均抛出 `XTAOError` 的子类。
 - **单一入口**：`run_plan()` 编排完整 G4C 生命周期；细粒度方法供进阶控制。
 
 ## 目录
@@ -34,7 +34,7 @@ SDK 封装了 XPlan FastAPI 服务暴露的全部 REST 接口，并复用 `xplan
 
 ## 安装
 
-SDK 随 `xplan` 包一同发布。在仓库根目录下以 editable 模式安装即可：
+SDK 随 `xtao` 包一同发布。在仓库根目录下以 editable 模式安装即可：
 
 ```bash
 pip install -e .
@@ -46,11 +46,11 @@ pip install -e .
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 async def main():
     # 作为异步上下文管理器使用，HTTP 客户端会自动关闭
-    async with XPlanClient(base_url="http://localhost:8000") as client:
+    async with XTAOClient(base_url="http://localhost:8000") as client:
         # 1. 健康检查
         print(await client.health_check())
 
@@ -68,10 +68,10 @@ asyncio.run(main())
 ## 客户端配置
 
 ```python
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
-client = XPlanClient(
-    base_url="http://localhost:8000",  # XPlan 服务地址
+client = XTAOClient(
+    base_url="http://localhost:8000",  # XTAO 服务地址
     api_key="可选的-bearer-token",     # 作为 Authorization: Bearer <key> 发送
     timeout=120.0,                     # 请求超时（秒）
 )
@@ -79,12 +79,12 @@ client = XPlanClient(
 
 | 参数       | 类型                  | 默认值                  | 说明                                            |
 |------------|-----------------------|--------------------------|-------------------------------------------------|
-| `base_url` | `str`                 | `http://localhost:8000`  | XPlan 服务地址。                                 |
+| `base_url` | `str`                 | `http://localhost:8000`  | XTAO 服务地址。                                 |
 | `api_key`  | `str \| None`         | `None`                   | 可选的 bearer token。                            |
 | `timeout`  | `float`               | `120.0`                  | 默认请求超时（秒）。                             |
 | `client`   | `httpx.AsyncClient`   | `None`                   | 可选的预配置客户端（由调用方负责关闭）。          |
 
-客户端是异步上下文管理器（`async with XPlanClient(...) as c:`）。若手动
+客户端是异步上下文管理器（`async with XTAOClient(...) as c:`）。若手动
 创建，结束时需调用 `await client.close()`。
 
 ## 主入口：`run_plan`
@@ -103,8 +103,8 @@ client = XPlanClient(
 5. 返回 `OrchestratorResult`，含最终 Plan、执行轨迹、Replan 次数与评估分数。
 
 ```python
-from xplan.sdk import XPlanClient
-from xplan.models import OrchestratorConfig
+from xtao.sdk import XTAOClient
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(
     use_iteration=True,
@@ -284,7 +284,7 @@ Replan 振荡率。
 返回 `valid`、`errors`、`cycles`、`topological_order`。
 
 ```python
-from xplan.models import DAGPlan, DAGNode, DAGEdge
+from xtao.models import DAGPlan, DAGNode, DAGEdge
 
 dag = DAGPlan(nodes=[DAGNode(...)], edges=[DAGEdge(...)])
 res = await client.validate_dag(dag)
@@ -350,7 +350,7 @@ print(changes["changes"])
 #### `get_failed_paths() -> dict`
 
 ```python
-from xplan.models import CandidatePath
+from xtao.models import CandidatePath
 
 await client.register_decision(
     decision_id="extract-facts",
@@ -375,7 +375,7 @@ TAO 决定每个具体步骤如何推进并解释反馈。
 `POST /api/tao/run` -- 运行完整 TAO 受控状态循环。
 
 ```python
-from xplan.models import ActionCandidate, ActionType
+from xtao.models import ActionCandidate, ActionType
 
 result = await client.run_tao(
     user_input="帮我优化简历中的项目经历",
@@ -395,7 +395,7 @@ print(result["final_output"])
 `ActionCandidate` 支持扩展元数据，帮助引擎筛选并选择正确的 Action。可填写 `tags`、`intents`、`applicable_scenarios`、`permissions`、`cost`、`risk`、`alternatives` 等字段描述候选。
 
 ```python
-from xplan.models import ActionCandidate, ActionType
+from xtao.models import ActionCandidate, ActionType
 
 candidates = [
     ActionCandidate(
@@ -473,7 +473,7 @@ result = await client.run_tao(
 TAO 也可以在主编排流程中按步骤启用：
 
 ```python
-from xplan.models import OrchestratorConfig
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(
     use_tao=True,
@@ -489,19 +489,19 @@ result = await client.run_plan(user_input="...", config=config)
 
 ## 错误处理
 
-所有 SDK 失败均抛出 `XPlanError` 的子类。捕获基类可处理任意 SDK 错误，
+所有 SDK 失败均抛出 `XTAOError` 的子类。捕获基类可处理任意 SDK 错误，
 捕获具体子类可做更细粒度控制。
 
 | 异常              | 触发场景                                            |
 |-------------------|-----------------------------------------------------|
-| `XPlanError`      | 所有 SDK 错误的基类。                                |
-| `ConnectionError` | 无法连接到 XPlan 服务。                              |
+| `XTAOError`      | 所有 SDK 错误的基类。                                |
+| `ConnectionError` | 无法连接到 XTAO 服务。                              |
 | `TimeoutError`    | 请求超时。                                           |
 | `APIError`        | 服务端返回非 2xx。提供 `status_code` 与 `detail`。   |
 | `ValidationError` | 响应无法解析为目标模型。                             |
 
 ```python
-from xplan.sdk import XPlanClient, APIError, ConnectionError, XPlanError
+from xtao.sdk import XTAOClient, APIError, ConnectionError, XTAOError
 
 try:
     result = await client.run_plan(user_input="...")
@@ -514,12 +514,12 @@ except APIError as exc:
     elif exc.status_code >= 500:
         print("服务端错误：", exc.detail)
     raise
-except XPlanError:
+except XTAOError:
     # 兜底捕获其他 SDK 错误
     raise
 ```
 
-> 注意：`xplan.sdk.ConnectionError` / `xplan.sdk.TimeoutError` 会遮蔽同名的
+> 注意：`xtao.sdk.ConnectionError` / `xtao.sdk.TimeoutError` 会遮蔽同名的
 > Python 内建异常。若同一模块中两者都需要，请用别名导入。
 
 ## 模型 vs 字典
@@ -529,7 +529,7 @@ SDK 既接受 Pydantic 模型实例，也接受普通字典 —— 哪个方便�
 
 ```python
 # 使用模型（推荐：IDE 提示与校验更佳）
-from xplan.models import Plan, Goal, Context, Choice, Step
+from xtao.models import Plan, Goal, Context, Choice, Step
 
 plan = Plan(
     goal=Goal(user_goal="...", success_criteria=[...]),
@@ -549,7 +549,7 @@ await client.verify_plan({
 响应默认返回解析后的 JSON 字典。若要将其校验为模型，直接使用 Pydantic：
 
 ```python
-from xplan.models import OrchestratorResult
+from xtao.models import OrchestratorResult
 
 res = await client.run_plan(user_input="...")
 result = OrchestratorResult.model_validate(res)
@@ -562,11 +562,11 @@ SDK 异步优先，但可在同步代码中通过 `asyncio.run` 驱动：
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 def run(user_input: str) -> dict:
     async def _run():
-        async with XPlanClient() as client:
+        async with XTAOClient() as client:
             return await client.run_plan(user_input=user_input)
     return asyncio.run(_run())
 
@@ -581,10 +581,10 @@ print(run("帮我优化简历"))
 ### 自定义配置的完整生命周期
 
 ```python
-from xplan.sdk import XPlanClient
-from xplan.models import OrchestratorConfig
+from xtao.sdk import XTAOClient
+from xtao.models import OrchestratorConfig
 
-async def full_lifecycle(client: XPlanClient, goal: str) -> dict:
+async def full_lifecycle(client: XTAOClient, goal: str) -> dict:
     config = OrchestratorConfig(
         use_iteration=True,
         max_iterations=3,
@@ -602,7 +602,7 @@ async def full_lifecycle(client: XPlanClient, goal: str) -> dict:
 适用于需要在各阶段之间检查或修改 Plan 的场景。
 
 ```python
-async def manual_control(client: XPlanClient, goal: str):
+async def manual_control(client: XTAOClient, goal: str):
     gen = await client.generate_plan(user_input=goal, use_iteration=True)
     plan = gen["plan"]
 
@@ -618,7 +618,7 @@ async def manual_control(client: XPlanClient, goal: str):
 ### 失败恢复循环
 
 ```python
-async def recover(client: XPlanClient, plan: dict, failed_step: str, error: str):
+async def recover(client: XTAOClient, plan: dict, failed_step: str, error: str):
     # 1. 回溯定位根因（失败点 != 根因点）
     trace = await client.trace_failure(plan, failed_step, error)
     root = trace["result"]["root_cause_point"]
@@ -637,7 +637,7 @@ async def recover(client: XPlanClient, plan: dict, failed_step: str, error: str)
 ### 评估 Replan 效果
 
 ```python
-async def evaluate(client: XPlanClient):
+async def evaluate(client: XTAOClient):
     # 前提：已通过 record_replan_event(...) 收集事件
     metrics = await client.get_replan_metrics()
     print("根因定位准确率：", metrics["root_cause_accuracy"])
@@ -660,4 +660,4 @@ async def evaluate(client: XPlanClient):
 
 - [README_zh.md](../README_zh.md) —— 项目概览与部署。
 - [API_zh.md](API_zh.md) —— 原始 REST API 参考。
-- 源码：[`src/xplan/sdk/`](../src/xplan/sdk)
+- 源码：[`src/xtao/sdk/`](../src/xtao/sdk)

@@ -1,6 +1,6 @@
-# XPlan API 接口调用说明
+# XTAO API 接口调用说明
 
-XPlan 是基于 G4C 方法论（Goal、Context、Choice、Checkpoint、Correction）的 Agent Plan 机制，提供 FastAPI 后端服务。本文档描述所有 REST API 接口的调用方式、请求/响应结构及示例。
+XTAO 是基于 G4C 方法论（Goal、Context、Choice、Checkpoint、Correction）的 Agent Plan 机制，提供 FastAPI 后端服务。本文档描述所有 REST API 接口的调用方式、请求/响应结构及示例。
 
 ---
 
@@ -31,7 +31,7 @@ XPlan 是基于 G4C 方法论（Goal、Context、Choice、Checkpoint、Correctio
 
 ### 主入口
 
-`POST /api/plan/run` 是**主编排入口**，内部运行完整 G4C 生命周期 —— 生成 → 评估 → 执行 → 纠偏 —— 并在 Checkpoint 失败时编排失败回溯、可信状态、回溯、Replan 与评估。其余接口暴露各子系统供细粒度控制。另提供 Python SDK（见 [SDK_zh.md](SDK_zh.md)），其对应主方法为 `XPlanClient.run_plan()`。
+`POST /api/plan/run` 是**主编排入口**，内部运行完整 G4C 生命周期 —— 生成 → 评估 → 执行 → 纠偏 —— 并在 Checkpoint 失败时编排失败回溯、可信状态、回溯、Replan 与评估。其余接口暴露各子系统供细粒度控制。另提供 Python SDK（见 [SDK_zh.md](SDK_zh.md)），其对应主方法为 `XTAOClient.run_plan()`。
 
 ---
 
@@ -51,7 +51,7 @@ XPlan 是基于 G4C 方法论（Goal、Context、Choice、Checkpoint、Correctio
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | status | string | 服务状态，正常返回 `ok` |
-| service | string | 服务名称，固定为 `xplan` |
+| service | string | 服务名称，固定为 `xtao` |
 | version | string | 服务版本号 |
 
 **curl 示例**：
@@ -65,7 +65,7 @@ curl -X GET http://localhost:8000/api/health
 ```json
 {
   "status": "ok",
-  "service": "xplan",
+  "service": "xtao",
   "version": "0.1.0"
 }
 ```

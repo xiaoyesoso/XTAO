@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xplan"
+name = "xtao"
 version = "0.1.0"
-description = "Agent Plan 机制 - 基于 G4C 方法论的可检查、可纠偏、可执行运行时对象"
+description = "Agent TAO 机制 - 基于 G4C 方法论的可检查、可纠偏、可执行运行时对象"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",

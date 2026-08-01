@@ -1,14 +1,14 @@
-# XPlan Python SDK
+# XTAO Python SDK
 
-> A Pythonic, type-safe async client for the XPlan G4C Plan service.
+> A Pythonic, type-safe async client for the XTAO G4C Plan service.
 
-The SDK wraps every REST endpoint exposed by the XPlan FastAPI server and
-reuses the Pydantic models from `xplan.models`, so callers can pass model
+The SDK wraps every REST endpoint exposed by the XTAO FastAPI server and
+reuses the Pydantic models from `xtao.models`, so callers can pass model
 instances directly without dealing with raw JSON.
 
 - **Async-first**: built on `httpx.AsyncClient`, fits naturally into FastAPI / async codebases.
 - **Type-safe**: accepts and returns Pydantic models / typed dicts.
-- **Unified errors**: all failures raise subclasses of `XPlanError`.
+- **Unified errors**: all failures raise subclasses of `XTAOError`.
 - **One entry point**: `run_plan()` orchestrates the full G4C lifecycle; granular methods are exposed for advanced control.
 
 ## Table of Contents
@@ -35,7 +35,7 @@ instances directly without dealing with raw JSON.
 
 ## Installation
 
-The SDK ships with the `xplan` package. Install the project in editable mode
+The SDK ships with the `xtao` package. Install the project in editable mode
 from the repository root:
 
 ```bash
@@ -48,11 +48,11 @@ Dependencies (`httpx`, `pydantic>=2.9`) are pulled in automatically.
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 async def main():
     # Use as an async context manager so the HTTP client is closed automatically.
-    async with XPlanClient(base_url="http://localhost:8000") as client:
+    async with XTAOClient(base_url="http://localhost:8000") as client:
         # 1. Health check
         print(await client.health_check())
 
@@ -70,10 +70,10 @@ asyncio.run(main())
 ## Client Configuration
 
 ```python
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
-client = XPlanClient(
-    base_url="http://localhost:8000",  # XPlan server URL
+client = XTAOClient(
+    base_url="http://localhost:8000",  # XTAO server URL
     api_key="optional-bearer-token",   # sent as Authorization: Bearer <key>
     timeout=120.0,                     # request timeout in seconds
 )
@@ -81,12 +81,12 @@ client = XPlanClient(
 
 | Parameter  | Type                  | Default                  | Description                                                      |
 |------------|-----------------------|--------------------------|------------------------------------------------------------------|
-| `base_url` | `str`                 | `http://localhost:8000`  | XPlan server base URL.                                           |
+| `base_url` | `str`                 | `http://localhost:8000`  | XTAO server base URL.                                           |
 | `api_key`  | `str \| None`         | `None`                   | Optional bearer token.                                           |
 | `timeout`  | `float`               | `120.0`                  | Default request timeout (seconds).                               |
 | `client`   | `httpx.AsyncClient`   | `None`                   | Optional pre-configured client (caller closes it).               |
 
-The client is an async context manager (`async with XPlanClient(...) as c:`).
+The client is an async context manager (`async with XTAOClient(...) as c:`).
 If you instantiate it manually, call `await client.close()` when done.
 
 ## Main Entry Point: `run_plan`
@@ -107,8 +107,8 @@ G4C pipeline:
    replan count, and verification score.
 
 ```python
-from xplan.sdk import XPlanClient
-from xplan.models import OrchestratorConfig
+from xtao.sdk import XTAOClient
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(
     use_iteration=True,
@@ -294,7 +294,7 @@ set (key fields of all events, with annotation fields set to `null`).
 topological sort). Returns `valid`, `errors`, `cycles`, `topological_order`.
 
 ```python
-from xplan.models import DAGPlan, DAGNode, DAGEdge
+from xtao.models import DAGPlan, DAGNode, DAGEdge
 
 dag = DAGPlan(nodes=[DAGNode(...)], edges=[DAGEdge(...)])
 res = await client.validate_dag(dag)
@@ -366,7 +366,7 @@ is fast — no need to regenerate the Plan.
 #### `get_failed_paths() -> dict`
 
 ```python
-from xplan.models import CandidatePath
+from xtao.models import CandidatePath
 
 await client.register_decision(
     decision_id="extract-facts",
@@ -392,7 +392,7 @@ concrete step moves forward and interprets feedback.
 `POST /api/tao/run` - Run the full TAO controlled state loop.
 
 ```python
-from xplan.models import ActionCandidate, ActionType
+from xtao.models import ActionCandidate, ActionType
 
 result = await client.run_tao(
     user_input="Optimize my resume project experience",
@@ -412,7 +412,7 @@ print(result["final_output"])
 `ActionCandidate` supports extended metadata to help the engine filter and select the right action. Use `tags`, `intents`, `applicable_scenarios`, `permissions`, `cost`, `risk`, and `alternatives` to describe each candidate.
 
 ```python
-from xplan.models import ActionCandidate, ActionType
+from xtao.models import ActionCandidate, ActionType
 
 candidates = [
     ActionCandidate(
@@ -494,7 +494,7 @@ metrics, abnormal samples and suggestions.
 TAO can also be enabled per-step within the main orchestration:
 
 ```python
-from xplan.models import OrchestratorConfig
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(
     use_tao=True,
@@ -510,19 +510,19 @@ result = await client.run_plan(user_input="...", config=config)
 
 ## Error Handling
 
-All SDK failures raise subclasses of `XPlanError`. Catch the base class to
+All SDK failures raise subclasses of `XTAOError`. Catch the base class to
 handle any SDK error, or catch specific subclasses for finer control.
 
 | Exception        | When raised                                              |
 |------------------|----------------------------------------------------------|
-| `XPlanError`     | Base class for all SDK errors.                           |
-| `ConnectionError`| Cannot reach the XPlan server.                           |
+| `XTAOError`     | Base class for all SDK errors.                           |
+| `ConnectionError`| Cannot reach the XTAO server.                           |
 | `TimeoutError`   | Request timed out.                                       |
 | `APIError`       | Server returned a non-2xx status. Exposes `status_code` and `detail`. |
 | `ValidationError`| Response cannot be parsed into the requested model.      |
 
 ```python
-from xplan.sdk import XPlanClient, APIError, ConnectionError, XPlanError
+from xtao.sdk import XTAOClient, APIError, ConnectionError, XTAOError
 
 try:
     result = await client.run_plan(user_input="...")
@@ -535,12 +535,12 @@ except APIError as exc:
     elif exc.status_code >= 500:
         print("Server error:", exc.detail)
     raise
-except XPlanError:
+except XTAOError:
     # catch-all for any other SDK error
     raise
 ```
 
-> Note: `xplan.sdk.ConnectionError` / `xplan.sdk.TimeoutError` shadow the
+> Note: `xtao.sdk.ConnectionError` / `xtao.sdk.TimeoutError` shadow the
 > Python builtins of the same name. Import them with an alias if you need
 > both in the same module.
 
@@ -552,7 +552,7 @@ is more convenient. Internally, models are serialized via
 
 ```python
 # Using models (recommended for IDE support and validation)
-from xplan.models import Plan, Goal, Context, Choice, Step
+from xtao.models import Plan, Goal, Context, Choice, Step
 
 plan = Plan(
     goal=Goal(user_goal="...", success_criteria=[...]),
@@ -573,7 +573,7 @@ Responses are returned as parsed JSON dicts. To validate a response into a
 model, use Pydantic directly:
 
 ```python
-from xplan.models import OrchestratorResult
+from xtao.models import OrchestratorResult
 
 res = await client.run_plan(user_input="...")
 result = OrchestratorResult.model_validate(res)
@@ -587,11 +587,11 @@ The SDK is async-first, but you can drive it from synchronous code with
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 def run(user_input: str) -> dict:
     async def _run():
-        async with XPlanClient() as client:
+        async with XTAOClient() as client:
             return await client.run_plan(user_input=user_input)
     return asyncio.run(_run())
 
@@ -606,10 +606,10 @@ reusing the client rather than recreating it per call.
 ### Full lifecycle with custom config
 
 ```python
-from xplan.sdk import XPlanClient
-from xplan.models import OrchestratorConfig
+from xtao.sdk import XTAOClient
+from xtao.models import OrchestratorConfig
 
-async def full_lifecycle(client: XPlanClient, goal: str) -> dict:
+async def full_lifecycle(client: XTAOClient, goal: str) -> dict:
     config = OrchestratorConfig(
         use_iteration=True,
         max_iterations=3,
@@ -627,7 +627,7 @@ async def full_lifecycle(client: XPlanClient, goal: str) -> dict:
 Use this when you want to inspect or mutate the plan between stages.
 
 ```python
-async def manual_control(client: XPlanClient, goal: str):
+async def manual_control(client: XTAOClient, goal: str):
     gen = await client.generate_plan(user_input=goal, use_iteration=True)
     plan = gen["plan"]
 
@@ -643,7 +643,7 @@ async def manual_control(client: XPlanClient, goal: str):
 ### Failure recovery loop
 
 ```python
-async def recover(client: XPlanClient, plan: dict, failed_step: str, error: str):
+async def recover(client: XTAOClient, plan: dict, failed_step: str, error: str):
     # 1. Trace the root cause (failure point != root cause point)
     trace = await client.trace_failure(plan, failed_step, error)
     root = trace["result"]["root_cause_point"]
@@ -662,7 +662,7 @@ async def recover(client: XPlanClient, plan: dict, failed_step: str, error: str)
 ### Evaluate Replan effectiveness
 
 ```python
-async def evaluate(client: XPlanClient):
+async def evaluate(client: XTAOClient):
     # After collecting replan events via record_replan_event(...)...
     metrics = await client.get_replan_metrics()
     print("Root cause accuracy:", metrics["root_cause_accuracy"])
@@ -685,4 +685,4 @@ async def evaluate(client: XPlanClient):
 
 - [README.md](../README.md) — Project overview and deployment.
 - [API.md](API.md) — Raw REST API reference.
-- Source: [`src/xplan/sdk/`](../src/xplan/sdk)
+- Source: [`src/xtao/sdk/`](../src/xtao/sdk)

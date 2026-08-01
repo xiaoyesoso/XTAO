@@ -1,4 +1,4 @@
-# XPlan
+# XTAO
 
 > 基于 G4C 方法论的 Agent Plan 机制
 
@@ -10,7 +10,7 @@
 
 ## 目录
 
-- [XPlan](#xplan)
+- [XTAO](#xtao)
   - [目录](#目录)
   - [功能特性](#功能特性)
   - [技术栈](#技术栈)
@@ -70,9 +70,9 @@
 ## 项目结构
 
 ```
-XPlan/
+XTAO/
 ├── src/
-│   └── xplan/
+│   └── xtao/
 │       ├── main.py                # FastAPI 应用入口
 │       ├── api/
 │       │   └── routes.py          # REST API 路由定义
@@ -129,8 +129,8 @@ XPlan/
 │       │   ├── tao_loop_controller.py     # 循环出口 + 死循环/停滞检测
 │       │   └── tao_massive_action_filter.py # 海量 Action 多级筛选流水线
 │       ├── sdk/                   # Python SDK（REST API 异步客户端）
-│       │   ├── client.py                 # XPlanClient（覆盖全部 31 个接口）
-│       │   └── exceptions.py             # XPlanError / APIError / ConnectionError 等
+│       │   ├── client.py                 # XTAOClient（覆盖全部 31 个接口）
+│       │   └── exceptions.py             # XTAOError / APIError / ConnectionError 等
 │       └── evaluation/            # 质量评估
 │           ├── metrics.py                 # Prometheus 指标
 │           ├── offline_analyzer.py        # 离线 G4C 分析
@@ -160,7 +160,7 @@ XPlan/
 ```bash
 # 克隆仓库
 git clone <repo-url>
-cd XPlan
+cd XTAO
 
 # 安装依赖
 pip install -e .
@@ -170,7 +170,7 @@ cp .env.example .env
 # 编辑 .env 填写 LLM API key
 
 # 启动服务
-python -m uvicorn xplan.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
 ```
 
 启动后访问交互式文档：`http://localhost:8000/docs`
@@ -304,14 +304,14 @@ TAO 中的 Action 是面向目标的操作封装，不是原始工具。良好�
 
 ## Python SDK
 
-`xplan.sdk` 提供类型安全的异步客户端，封装全部 REST 接口，并复用 `xplan.models` 中的 Pydantic 模型，可直接传入模型实例。
+`xtao.sdk` 提供类型安全的异步客户端，封装全部 REST 接口，并复用 `xtao.models` 中的 Pydantic 模型，可直接传入模型实例。
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 async def main():
-    async with XPlanClient(base_url="http://localhost:8000") as client:
+    async with XTAOClient(base_url="http://localhost:8000") as client:
         result = await client.run_plan(user_input="帮我优化简历")
         print(result["status"], result["replan_count"])
 
@@ -320,13 +320,13 @@ asyncio.run(main())
 
 ```python
 # 启用 TAO 循环执行步骤
-from xplan.models import OrchestratorConfig
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
 result = await client.run_plan(user_input="...", config=config)
 ```
 
-SDK 主方法是 `XPlanClient.run_plan()`；另外 30 个方法镜像细粒度的 REST 接口（generate、verify、execute、trace、replan、tcc_replan、constraints、可信状态、回溯、候选路径、评估、metrics、DAG）。完整 SDK 文档：[docs/SDK_zh.md](docs/SDK_zh.md)（中文）/ [docs/SDK.md](docs/SDK.md)（English）。
+SDK 主方法是 `XTAOClient.run_plan()`；另外 30 个方法镜像细粒度的 REST 接口（generate、verify、execute、trace、replan、tcc_replan、constraints、可信状态、回溯、候选路径、评估、metrics、DAG）。完整 SDK 文档：[docs/SDK_zh.md](docs/SDK_zh.md)（中文）/ [docs/SDK.md](docs/SDK.md)（English）。
 
 ---
 

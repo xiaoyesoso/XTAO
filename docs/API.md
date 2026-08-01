@@ -1,8 +1,8 @@
-# XPlan API Reference
+# XTAO API Reference
 
 ## 1. Introduction
 
-XPlan is an Agent Plan mechanism built on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction). This document describes the REST API exposed by the XPlan FastAPI backend service.
+XTAO is an Agent Plan mechanism built on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction). This document describes the REST API exposed by the XTAO FastAPI backend service.
 
 ### Base URL
 
@@ -24,7 +24,7 @@ The API does not require authentication by default. Configure the underlying LLM
 
 ### Primary Entry Point
 
-`POST /api/plan/run` is the **main orchestration entry point**. It runs the full G4C lifecycle internally — generate → verify → execute → correct — and, on checkpoint failure, orchestrates failure tracing, trust state, backtracking, replan, and evaluation. The other endpoints expose the individual subsystems for granular control. A Python SDK is also available (see [SDK.md](SDK.md)) with `XPlanClient.run_plan()` as the matching primary method.
+`POST /api/plan/run` is the **main orchestration entry point**. It runs the full G4C lifecycle internally — generate → verify → execute → correct — and, on checkpoint failure, orchestrates failure tracing, trust state, backtracking, replan, and evaluation. The other endpoints expose the individual subsystems for granular control. A Python SDK is also available (see [SDK.md](SDK.md)) with `XTAOClient.run_plan()` as the matching primary method.
 
 ---
 
@@ -45,7 +45,7 @@ No request body.
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | Service status, always `"ok"` when healthy |
-| `service` | string | Service name, always `"xplan"` |
+| `service` | string | Service name, always `"xtao"` |
 | `version` | string | Service version |
 
 **Example**
@@ -57,7 +57,7 @@ curl -X GET http://localhost:8000/api/health
 ```json
 {
   "status": "ok",
-  "service": "xplan",
+  "service": "xtao",
   "version": "0.1.0"
 }
 ```
@@ -2602,7 +2602,7 @@ Aggregate TAO runtime state, carried across loop rounds (and between atomic API 
 | `exit_decision` | string | `"continue"` | `continue` / `finish` / `clarify` / `retry` / `replan` / `interrupt` |
 | `reason` | string | `""` | Evidence-based reason (must reference Goal/Context/Constraint) |
 | `risk_level` | string | `"low"` | `low` / `medium` / `high` |
-| `risk_reason` | string | `""` | Explanation when risk is not low |
+| `risk_reason` | string | `""` | Extaoation when risk is not low |
 
 ### TAOResult
 

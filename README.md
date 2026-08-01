@@ -1,10 +1,10 @@
-# XPlan
+# XTAO
 
 > Agent Plan mechanism based on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction).
 
 **中文文档**：[README_zh.md](README_zh.md)
 
-XPlan elevates a Plan from a "step list" to a **checkable, correctable, executable runtime object**, systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
+XTAO elevates a Plan from a "step list" to a **checkable, correctable, executable runtime object**, systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
 
 ---
 
@@ -35,8 +35,8 @@ XPlan elevates a Plan from a "step list" to a **checkable, correctable, executab
 ## Project Structure
 
 ```
-XPlan/
-├── src/xplan/
+XTAO/
+├── src/xtao/
 │   ├── main.py                     # FastAPI app entry point
 │   ├── api/
 │   │   └── routes.py               # REST API routes (incl. main /api/plan/run entry)
@@ -74,8 +74,8 @@ XPlan/
 │   │   ├── tao_loop_controller.py  # Loop exit + dead-loop/stagnation detection
 │   │   └── tao_massive_action_filter.py  # Multi-stage candidate filtering pipeline
 │   ├── sdk/                        # Python SDK - async client for the REST API
-│   │   ├── client.py               # XPlanClient (all 31 endpoints)
-│   │   └── exceptions.py           # XPlanError / APIError / ConnectionError / ...
+│   │   ├── client.py               # XTAOClient (all 31 endpoints)
+│   │   └── exceptions.py           # XTAOError / APIError / ConnectionError / ...
 │   └── evaluation/                 # Metrics, offline analyzer, ReplanEvaluator
 │       └── tao_evaluator.py        # TAO quality evaluation (Think/Action/Observation metrics)
 ├── tests/
@@ -101,7 +101,7 @@ XPlan/
 ```bash
 # Clone
 git clone <repo-url>
-cd XPlan
+cd XTAO
 
 # Install dependencies
 pip install -e .
@@ -111,7 +111,7 @@ cp .env.example .env
 # Edit .env with your LLM API key
 
 # Run
-python -m uvicorn xplan.main:app --host 0.0.0.0 --port 8000
+python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### Docker Deployment
@@ -248,14 +248,14 @@ python tests/test_tao_live.py
 
 ## Python SDK
 
-A type-safe async client ships under `xplan.sdk`. It wraps every REST endpoint and reuses the Pydantic models from `xplan.models` so you can pass model instances directly.
+A type-safe async client ships under `xtao.sdk`. It wraps every REST endpoint and reuses the Pydantic models from `xtao.models` so you can pass model instances directly.
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
+from xtao.sdk import XTAOClient
 
 async def main():
-    async with XPlanClient(base_url="http://localhost:8000") as client:
+    async with XTAOClient(base_url="http://localhost:8000") as client:
         result = await client.run_plan(user_input="Help me optimize my resume")
         print(result["status"], result["replan_count"])
 
@@ -264,13 +264,13 @@ asyncio.run(main())
 
 ```python
 # Enable TAO loop for step-level execution
-from xplan.models import OrchestratorConfig
+from xtao.models import OrchestratorConfig
 
 config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
 result = await client.run_plan(user_input="...", config=config)
 ```
 
-The primary SDK method is `XPlanClient.run_plan()`; 30 additional methods mirror the granular REST endpoints (generate, verify, execute, trace, replan, tcc_replan, constraints, trust state, backtracking, candidate paths, evaluation, metrics, DAG). Full SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (中文).
+The primary SDK method is `XTAOClient.run_plan()`; 30 additional methods mirror the granular REST endpoints (generate, verify, execute, trace, replan, tcc_replan, constraints, trust state, backtracking, candidate paths, evaluation, metrics, DAG). Full SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (中文).
 
 ## G4C Methodology
 

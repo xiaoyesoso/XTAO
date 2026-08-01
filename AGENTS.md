@@ -4,14 +4,14 @@ This file provides project context and working guidelines for AI agents.
 
 ## Project Overview
 
-XPlan is an Agent Plan mechanism built on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction). The core objective is to elevate Plan from a "step list" to a "checkable, correctable, executable runtime object," systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
+XTAO is an Agent Plan mechanism built on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction). The core objective is to elevate Plan from a "step list" to a "checkable, correctable, executable runtime object," systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
 
 The project also implements a **Replan mechanism** (trigger detection, code+LLM dual judgment, three granularity levels, evidence-based prompt design), an optional **TCC Replan** advanced scheme (Try/Confirm/Cancel), and a **TAO (Think-Action-Observation) / ReAct execution engine** with Action design guidelines, multi-dimensional candidate filtering, loop safety, and high-availability wrappers.
 
 ## Project Structure
 
 ```
-XPlan/
+XTAO/
 ├── AGENTS.md                              # This file - AI Agent guidelines
 ├── README.md                              # English README
 ├── README_zh.md                           # Chinese README
@@ -28,7 +28,7 @@ XPlan/
 │   ├── SDK.md                             # Python SDK docs (English)
 │   └── SDK_zh.md                          # Python SDK docs (Chinese)
 ├── src/
-│   └── xplan/
+│   └── xtao/
 │       ├── __init__.py                    # Package init
 │       ├── main.py                        # FastAPI app entry point
 │       ├── api/
@@ -94,9 +94,9 @@ XPlan/
 │       │   ├── tao_massive_action_filter.py # MassiveActionFilter (multi-stage candidate filtering)
 │       │   └── tao_state_manager.py       # TAOStateManager (runtime state persistence)
 │       ├── sdk/                           # Python SDK (client for the REST API)
-│       │   ├── __init__.py                # Public exports: XPlanClient + exceptions
-│       │   ├── client.py                  # XPlanClient (async, httpx-based, all endpoints)
-│       │   └── exceptions.py              # XPlanError / APIError / ConnectionError / TimeoutError / ValidationError
+│       │   ├── __init__.py                # Public exports: XTAOClient + exceptions
+│       │   ├── client.py                  # XTAOClient (async, httpx-based, all endpoints)
+│       │   └── exceptions.py              # XTAOError / APIError / ConnectionError / TimeoutError / ValidationError
 │       └── evaluation/                    # Quality evaluation
 │           ├── __init__.py
 │           ├── metrics.py                 # PlanMetrics (Prometheus counters/gauges/histograms)
@@ -272,15 +272,15 @@ All routes are prefixed with `/api`. `POST /api/plan/run` is the **primary entry
 
 ## Python SDK
 
-A type-safe async client lives under [src/xplan/sdk/](src/xplan/sdk). It wraps every REST endpoint and reuses the Pydantic models from `xplan.models`, so callers can pass model instances directly without dealing with raw JSON.
+A type-safe async client lives under [src/xtao/sdk/](src/xtao/sdk). It wraps every REST endpoint and reuses the Pydantic models from `xtao.models`, so callers can pass model instances directly without dealing with raw JSON.
 
 ```python
 import asyncio
-from xplan.sdk import XPlanClient
-from xplan.models import OrchestratorConfig
+from xtao.sdk import XTAOClient
+from xtao.models import OrchestratorConfig
 
 async def main():
-    async with XPlanClient(base_url="http://localhost:8000") as client:
+    async with XTAOClient(base_url="http://localhost:8000") as client:
         result = await client.run_plan(
             user_input="Help me optimize my resume",
             config=OrchestratorConfig(max_replan_count=2),
@@ -290,7 +290,7 @@ async def main():
 asyncio.run(main())
 ```
 
-SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (Chinese). The single primary SDK method is `XPlanClient.run_plan()`; the other 30 methods mirror the granular REST endpoints.
+SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (Chinese). The single primary SDK method is `XTAOClient.run_plan()`; the other 30 methods mirror the granular REST endpoints.
 
 ## Environment Variables
 
@@ -315,7 +315,7 @@ SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md
 - **Commits**: Follow Conventional Commits
 - **Models**: Use Pydantic v2 for all data models
 - **Async**: Use async/await throughout; LLM calls use `llm_service.chat(system_prompt, user_prompt)`
-- **SDK**: The SDK (`xplan.sdk`) is async-only, reuses `xplan.models` for request/response payloads, and raises `XPlanError` subclasses on failure. All failures must surface as typed exceptions — never swallow errors silently.
+- **SDK**: The SDK (`xtao.sdk`) is async-only, reuses `xtao.models` for request/response payloads, and raises `XTAOError` subclasses on failure. All failures must surface as typed exceptions — never swallow errors silently.
 - **Testing**: Run `python -m pytest tests/test_plan.py tests/test_tao.py tests/test_backtracking.py tests/test_tracing.py -v` to verify (64+ tests, all passing)
 
 ## Docker Deployment
@@ -328,8 +328,8 @@ cp .env.example .env
 docker compose up -d
 
 # Or build manually
-docker build -t xplan .
-docker run -p 8000:8000 --env-file .env xplan
+docker build -t xtao .
+docker run -p 8000:8000 --env-file .env xtao
 ```
 
 ## Current Status
@@ -337,7 +337,7 @@ docker run -p 8000:8000 --env-file .env xplan
 - Change `agent-plan-g4c`: **all tasks complete** (proposal → specs → design → tasks → implement)
 - Change `agent-plan-tao-action-selection`: **all tasks complete** (proposal → specs → design → tasks → implement)
 - Core engine fully implemented: G4C generation, verification, execution, correction, Replan, TCC Replan, failure tracing, trust state, backtracking (5 levels), candidate paths, cross-turn tracking, TAO/ReAct execution engine, and the `PlanOrchestrator` main entry point
-- Python SDK shipped (`xplan.sdk.XPlanClient`) with full live-server end-to-end verification
+- Python SDK shipped (`xtao.sdk.XTAOClient`) with full live-server end-to-end verification
 - Docs: bilingual README (`README.md` / `README_zh.md`), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`)
 - 64 unit tests passing (`tests/test_plan.py` + `tests/test_tao.py`)
 - Live LLM integration tested with SiliconFlow DeepSeek
