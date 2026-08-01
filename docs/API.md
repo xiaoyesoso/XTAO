@@ -1567,16 +1567,15 @@ curl -X POST http://localhost:8000/api/evaluation/offline \
 ```json
 {
   "analysis": {
-    "goal_analysis": "Goal is clear but success criteria could be more specific",
-    "context_analysis": "Context is sparse, consider adding known constraints",
-    "choice_analysis": "Path selection is reasonable",
-    "checkpoint_analysis": "No checkpoints defined, add at least one",
-    "correction_analysis": "No correction rules defined",
-    "overall_score": 6.5,
-    "recommendations": [
-      "Add measurable success criteria",
-      "Add checkpoints at key milestones"
-    ]
+    "plan_id": null,
+    "score": 0.63,
+    "constraint_violations": [],
+    "checkpoint_issues": ["No checkpoints defined"],
+    "goal_issues": ["Success criteria could be more specific"],
+    "choice_issues": [],
+    "correction_issues": ["No correction rules defined"],
+    "checkpoint_sufficient": false,
+    "overall_assessment": "Overall score: 0.63; No constraint violations detected; Checkpoint count is insufficient; Goal definition has 1 issue(s); Path selection is reasonable; Correction mechanism has 1 issue(s)."
   }
 }
 ```
@@ -1926,6 +1925,8 @@ All Actions → intent/tag filter → rule engine → preconditions/permissions 
 - Historical success rates are tracked in `ActionAvailability` and used to deprioritize or temporarily disable unreliable actions.
 - Information-gain ranking prioritizes actions that fill currently missing slots.
 - LLM coarse filter uses the fast model with minimal context; the fine filter uses the pro model with full context.
+
+> Note: The current `coarse_filter` implements deterministic filtering (intent/tag/rule/precondition/permission/historical success rate). Information-gain ranking and LLM coarse/fine filters are design extension points not yet fully implemented in a single function.
 
 **Execution guards**
 

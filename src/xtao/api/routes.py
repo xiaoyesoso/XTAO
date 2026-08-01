@@ -17,7 +17,7 @@ Provides REST API for the G4C Plan mechanism:
 - POST /api/evaluation/replan/annotate - Import manual annotations
 - GET /api/evaluation/replan/test-set - Export test set
 - GET /api/metrics - Get online monitoring metrics
-- GET /api/dag/validate - Validate DAG structure
+- POST /api/dag/validate - Validate DAG structure
 - POST /api/tao/run - Run the full TAO (Think-Action-Observation) loop
 - POST /api/tao/think - Atomic TAO Think (five structured judgments + exit decision)
 - POST /api/tao/act - Atomic TAO Action execution

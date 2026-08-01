@@ -407,6 +407,8 @@ print(result["used_loops"])
 print(result["final_output"])
 ```
 
+> Note: SDK `run_tao` does not expose `supervisor_interval` or `supervisor_interval_seconds`. To adjust the TAO double-layer supervisor frequency, call `POST /api/tao/run` directly.
+
 #### Action metadata and filtering
 
 `ActionCandidate` supports extended metadata to help the engine filter and select the right action. Use `tags`, `intents`, `applicable_scenarios`, `permissions`, `cost`, `risk`, and `alternatives` to describe each candidate.

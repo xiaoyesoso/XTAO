@@ -1,10 +1,22 @@
 # XTAO
 
-> Agent Plan mechanism based on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction).
+> Agent planning and execution framework based on the **G4C methodology** (Goal, Context, Choice, Checkpoint, Correction).
 
 **中文文档**：[README_zh.md](README_zh.md)
 
-XTAO elevates a Plan from a "step list" to a **checkable, correctable, executable runtime object**, systematically eliminating five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
+XTAO is an **Agent planning and execution** framework. It addresses not only "how to generate a good Plan", but also "how a Plan senses deviation, locates root causes, and corrects itself during execution".
+
+The framework consists of three core parts:
+
+- **G4C** (Goal, Context, Choice, Checkpoint, Correction) elevates a Plan from a "step list" to a **checkable, correctable, executable runtime object**.
+- **TAO** (Think-Action-Observation) handles **step-level execution**, making the Agent think before acting and observe after acting.
+- **Replan** performs **controlled correction** when execution deviates, covering Step / Partial / Global granularities.
+
+G4C systematically eliminates five types of uncertainty during Agent execution: goal uncertainty, context uncertainty, path uncertainty, process uncertainty, and failure uncertainty.
+
+![G4C five-element architecture](docs/images/g4c_architecture.png)
+
+> The diagram above shows how the five G4C elements surround the Plan runtime object. A more complete project overview is available in [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md).
 
 ---
 
@@ -74,7 +86,7 @@ XTAO/
 │   │   ├── tao_loop_controller.py  # Loop exit + dead-loop/stagnation detection
 │   │   └── tao_massive_action_filter.py  # Multi-stage candidate filtering pipeline
 │   ├── sdk/                        # Python SDK - async client for the REST API
-│   │   ├── client.py               # XTAOClient (all 31 endpoints)
+│   │   ├── client.py               # XTAOClient (covers all granular REST endpoints)
 │   │   └── exceptions.py           # XTAOError / APIError / ConnectionError / ...
 │   └── evaluation/                 # Metrics, offline analyzer, ReplanEvaluator
 │       └── tao_evaluator.py        # TAO quality evaluation (Think/Action/Observation metrics)
@@ -207,6 +219,8 @@ All routes are prefixed with `/api`. **`POST /api/plan/run` is the primary entry
 | `POST` | `/api/evaluation/replan/annotate` | Import manual annotations for events |
 | `GET` | `/api/evaluation/replan/test-set` | Export Replan evaluation test set |
 
+TAO evaluation endpoints (`/api/evaluation/tao/event`, `/api/evaluation/tao/metrics`, `/api/evaluation/tao/report`, `/api/evaluation/tao/annotate`, `/api/evaluation/tao/test-set`, `/api/evaluation/tao/judge`) are listed under [TAO (Think-Action-Observation)](#tao-think-action-observation).
+
 ### TAO (Think-Action-Observation)
 
 | Method | Path | Description |
@@ -270,7 +284,7 @@ config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
 result = await client.run_plan(user_input="...", config=config)
 ```
 
-The primary SDK method is `XTAOClient.run_plan()`; 30 additional methods mirror the granular REST endpoints (generate, verify, execute, trace, replan, tcc_replan, constraints, trust state, backtracking, candidate paths, evaluation, metrics, DAG). Full SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (中文).
+The primary SDK method is `XTAOClient.run_plan()`; additional methods mirror all granular REST endpoints (generate, verify, execute, trace, replan, tcc_replan, constraints, trust state, backtracking, candidate paths, evaluation, metrics, DAG, TAO). Full SDK docs: [docs/SDK.md](docs/SDK.md) (English) / [docs/SDK_zh.md](docs/SDK_zh.md) (中文).
 
 ## G4C Methodology
 
@@ -292,6 +306,28 @@ Plan is not a step list, but a **checkable, correctable, executable runtime obje
 - **Checkpoint 3 rules** — Set at milestones, key intermediate outputs, and error-prone steps.
 - **5 correction strategies** — Retry, Replan, Clarify, Rollback, Abort.
 - **Linear Plan is default** — DAG Plan is an optional advanced mode.
+
+## TAO in a Nutshell
+
+**TAO** stands for **Think - Action - Observation**, the step-level controlled state loop engine in XTAO.
+
+If G4C and Replan solve the problem of "how to generate and correct a macro Plan", TAO solves the problem of "how each individual step of the Plan is executed". Every TAO round performs five structured judgments: goal judgment, state judgment, path judgment, stop judgment, and risk judgment.
+
+![TAO loop diagram](docs/images/tao_loop.png)
+
+In TAO, an Action is not a raw tool call but a goal-oriented operation wrapper. Before execution, candidates pass through a multi-stage filter; after execution, the Observation Interpreter converts raw output into evidence-bound facts. TAO also supports an optional double-layer supervisor loop to detect goal drift, constraint violations, and stagnation.
+
+For more details, see [docs/API.md](docs/API.md) and usage examples in [docs/SDK.md](docs/SDK.md).
+
+## Documentation
+
+- [docs/API.md](docs/API.md) — Full REST API reference (English)
+- [docs/API_zh.md](docs/API_zh.md) — Full REST API reference (Chinese)
+- [docs/SDK.md](docs/SDK.md) — Python SDK documentation (English)
+- [docs/SDK_zh.md](docs/SDK_zh.md) — Python SDK documentation (Chinese)
+- [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md) — Project retrospective with in-depth explanations of G4C, Replan, failure tracing, trust state, TCC, and TAO, plus illustrations
+
+Design illustrations are stored in [docs/images/](docs/images/).
 
 ## License
 

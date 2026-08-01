@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" width="800" height="520">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+    <linearGradient id="goalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#dbeafe;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#bfdbfe;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="ctxGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#dcfce7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#bbf7d0;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="choiceGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#fef3c7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#fde68a;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="cpGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f3e8ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e9d5ff;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="corrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffe4e6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#fecdd3;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="520" fill="#f8fafc"/>
+
+  <!-- Title -->
+  <text x="400" y="40" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="24" font-weight="700" fill="#1e293b">G4C：把 Plan 从「步骤列表」变成「运行时对象」</text>
+
+  <!-- Central Plan circle -->
+  <circle cx="400" cy="260" r="70" fill="#ffffff" stroke="#334155" stroke-width="3"/>
+  <text x="400" y="255" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="18" font-weight="700" fill="#0f172a">Plan</text>
+  <text x="400" y="278" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#475569">可检查 · 可纠偏 · 可执行</text>
+
+  <!-- Goal -->
+  <g transform="translate(400, 90)">
+    <rect x="-110" y="0" width="220" height="70" rx="12" fill="url(#goalGrad)" stroke="#3b82f6" stroke-width="2"/>
+    <text x="0" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#1e40af">Goal · 目标</text>
+    <text x="0" y="45" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#1e3a8a">要达成什么？成功标准是什么？</text>
+    <text x="0" y="62" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#64748b">消解「目标不确定性」</text>
+  </g>
+  <line x1="400" y1="160" x2="400" y2="190" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Context -->
+  <g transform="translate(120, 180)">
+    <rect x="0" y="0" width="200" height="70" rx="12" fill="url(#ctxGrad)" stroke="#22c55e" stroke-width="2"/>
+    <text x="100" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#14532d">Context · 上下文</text>
+    <text x="100" y="45" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#166534">已知什么？缺什么？约束是什么？</text>
+    <text x="100" y="62" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#64748b">消解「上下文不确定性」</text>
+  </g>
+  <line x1="260" y1="215" x2="340" y2="230" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Choice -->
+  <g transform="translate(120, 300)">
+    <rect x="0" y="0" width="200" height="70" rx="12" fill="url(#choiceGrad)" stroke="#f59e0b" stroke-width="2"/>
+    <text x="100" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#78350f">Choice · 路径</text>
+    <text x="100" y="45" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#92400e">为什么选这条路？备选是什么？</text>
+    <text x="100" y="62" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#64748b">消解「路径不确定性」</text>
+  </g>
+  <line x1="260" y1="335" x2="340" y2="290" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Checkpoint -->
+  <g transform="translate(480, 300)">
+    <rect x="0" y="0" width="200" height="70" rx="12" fill="url(#cpGrad)" stroke="#a855f7" stroke-width="2"/>
+    <text x="100" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#581c87">Checkpoint · 检查点</text>
+    <text x="100" y="45" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#6b21a8">怎么知道这一步做对了？</text>
+    <text x="100" y="62" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#64748b">消解「过程不确定性」</text>
+  </g>
+  <line x1="480" y1="335" x2="460" y2="310" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Correction -->
+  <g transform="translate(480, 180)">
+    <rect x="0" y="0" width="200" height="70" rx="12" fill="url(#corrGrad)" stroke="#f43f5e" stroke-width="2"/>
+    <text x="100" y="25" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#881337">Correction · 纠偏</text>
+    <text x="100" y="45" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#9f1239">走偏后怎么办？</text>
+    <text x="100" y="62" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="11" fill="#64748b">消解「失败不确定性」</text>
+  </g>
+  <line x1="480" y1="215" x2="460" y2="230" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Bottom note -->
+  <text x="400" y="470" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#475569">五要素全部结构化：XTAO 用 Pydantic 模型固化 Goal/Context/Choice/Checkpoint/Correction</text>
+</svg>

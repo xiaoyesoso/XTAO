@@ -1,10 +1,22 @@
 # XTAO
 
-> 基于 G4C 方法论的 Agent Plan 机制
+> 基于 G4C 方法论的 Agent 规划与执行框架
 
 **English**: [README.md](README.md)
 
-**G4C**（Goal、Context、Choice、Checkpoint、Correction）将 Plan 从「步骤列表」升级为**可检查、可纠偏、可执行的运行时对象**，系统性消除 Agent 执行过程中的目标不确定性、上下文不确定性、路径不确定性、过程不确定性与失败不确定性。
+XTAO 是一套面向 Agent 的**规划（Plan）与执行（Execution）**框架。它不仅解决「如何生成一份好 Plan」的问题，还解决「Plan 在执行过程中如何感知偏差、定位根因、自我修正」的问题。
+
+框架的核心由三部分组成：
+
+- **G4C**（Goal、Context、Choice、Checkpoint、Correction）负责把 Plan 从「步骤列表」升级为**可检查、可纠偏、可执行的运行时对象**。
+- **TAO**（Think-Action-Observation，思考-行动-观察）负责**步骤级执行**，让 Agent 每走一步都先思考、再行动、再观察。
+- **Replan** 负责在执行偏离时做**可控修正**，覆盖 Step / Partial / Global 三种粒度。
+
+G4C 系统性消除 Agent 执行过程中的目标不确定性、上下文不确定性、路径不确定性、过程不确定性与失败不确定性。
+
+![G4C 五要素架构图](docs/images/g4c_architecture.png)
+
+> 上图展示了 G4C 的五个要素如何围绕 Plan  runtime 对象工作。更完整的项目解读可参考 [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md)。
 
 ---
 
@@ -33,6 +45,8 @@
   - [测试](#测试)
   - [G4C 方法论简述](#g4c-方法论简述)
     - [关键设计原则](#关键设计原则)
+  - [TAO 简介](#tao-简介)
+  - [相关文档](#相关文档)
   - [开源协议](#开源协议)
 
 ---
@@ -129,7 +143,7 @@ XTAO/
 │       │   ├── tao_loop_controller.py     # 循环出口 + 死循环/停滞检测
 │       │   └── tao_massive_action_filter.py # 海量 Action 多级筛选流水线
 │       ├── sdk/                   # Python SDK（REST API 异步客户端）
-│       │   ├── client.py                 # XTAOClient（覆盖全部 31 个接口）
+│       │   ├── client.py                 # XTAOClient（覆盖全部细粒度 REST 接口）
 │       │   └── exceptions.py             # XTAOError / APIError / ConnectionError 等
 │       └── evaluation/            # 质量评估
 │           ├── metrics.py                 # Prometheus 指标
@@ -273,6 +287,8 @@ docker compose up -d
 | POST | `/api/evaluation/replan/annotate` | 导入手工标注结果 |
 | GET | `/api/evaluation/replan/test-set` | 导出 Replan 评估测试集 |
 
+TAO 评估接口（`/api/evaluation/tao/event`、`/api/evaluation/tao/metrics`、`/api/evaluation/tao/report`、`/api/evaluation/tao/annotate`、`/api/evaluation/tao/test-set`、`/api/evaluation/tao/judge`）见 [TAO（Think-Action-Observation）](#taothink-action-observation) 分类。
+
 ### TAO（Think-Action-Observation）
 
 | 方法 | 路径 | 说明 |
@@ -326,7 +342,7 @@ config = OrchestratorConfig(use_tao=True, tao_max_loops=10)
 result = await client.run_plan(user_input="...", config=config)
 ```
 
-SDK 主方法是 `XTAOClient.run_plan()`；另外 30 个方法镜像细粒度的 REST 接口（generate、verify、execute、trace、replan、tcc_replan、constraints、可信状态、回溯、候选路径、评估、metrics、DAG）。完整 SDK 文档：[docs/SDK_zh.md](docs/SDK_zh.md)（中文）/ [docs/SDK.md](docs/SDK.md)（English）。
+SDK 主方法是 `XTAOClient.run_plan()`；其他方法镜像全部细粒度 REST 接口（generate、verify、execute、trace、replan、tcc_replan、constraints、可信状态、回溯、候选路径、评估、metrics、DAG、TAO）。完整 SDK 文档：[docs/SDK_zh.md](docs/SDK_zh.md)（中文）/ [docs/SDK.md](docs/SDK.md)（English）。
 
 ---
 
@@ -368,6 +384,32 @@ Plan 不是步骤列表，而是**可检查、可纠偏、可执行的运行时�
 - **Checkpoint 三规则**：设置于里程碑、关键中间产物、易错步骤。
 - **5 种纠偏策略**：Retry、Replan、Clarify、Rollback、Abort。
 - **线性 Plan 为默认**：DAG Plan 为可选高级模式。
+
+---
+
+## TAO 简介
+
+**TAO** 是 **Think（思考）- Action（行动）- Observation（观察）** 的缩写，是 XTAO 中负责**步骤级执行**的受控状态循环引擎。
+
+如果说 G4C 和 Replan 解决的是「宏观 Plan 如何生成与修正」的问题，TAO 解决的就是「Plan 的每一步具体怎么执行」的问题。每一轮 TAO 循环都包含五个结构化判断：目标判断、状态判断、路径判断、停止判断和风险判断。
+
+![TAO 循环图](docs/images/tao_loop.png)
+
+TAO 中的 Action 不是原始工具调用，而是面向目标的操作封装。执行前会经过多级候选筛选，执行后会通过 Observation Interpreter 将原始输出转换为带证据绑定的事实。TAO 支持可选的双层监督循环，用于检测目标漂移、约束违反与停滞不前。
+
+更详细的 TAO 设计说明见 [docs/API_zh.md](docs/API_zh.md)，使用示例见 [docs/SDK_zh.md](docs/SDK_zh.md)。
+
+---
+
+## 相关文档
+
+- [docs/API_zh.md](docs/API_zh.md) —— 完整 REST API 中文参考
+- [docs/API.md](docs/API.md) —— 完整 REST API 英文参考
+- [docs/SDK_zh.md](docs/SDK_zh.md) —— Python SDK 中文文档
+- [docs/SDK.md](docs/SDK.md) —— Python SDK 英文文档
+- [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md) —— 项目复盘长文，包含 G4C、Replan、失败回溯、信任状态、TCC、TAO 的完整解读与配图
+
+设计配图存放在 [docs/images/](docs/images/)。
 
 ---
 

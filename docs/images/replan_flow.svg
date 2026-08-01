@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" width="900" height="420">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="900" height="420" fill="#f8fafc"/>
+  <text x="450" y="40" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="22" font-weight="700" fill="#1e293b">Replan：先判定「要不要改」，再执行「怎么改」</text>
+
+  <!-- Trigger detection -->
+  <g transform="translate(60, 90)">
+    <rect width="180" height="90" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="2"/>
+    <text x="90" y="30" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#1e40af">1. 触发检测</text>
+    <text x="90" y="52" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#1e3a8a">工具失败（非瞬态）</text>
+    <text x="90" y="70" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#1e3a8a">上下文变化 / 假设违反</text>
+  </g>
+  <line x1="240" y1="135" x2="300" y2="135" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Code judge -->
+  <g transform="translate(300, 90)">
+    <rect width="180" height="90" rx="10" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/>
+    <text x="90" y="30" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#14532d">2. 代码判定</text>
+    <text x="90" y="55" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#166534">过滤瞬态错误</text>
+    <text x="90" y="73" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#166534">超时 / 限流 / 格式错误</text>
+  </g>
+  <line x1="480" y1="135" x2="540" y2="135" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- LLM judge -->
+  <g transform="translate(540, 90)">
+    <rect width="180" height="90" rx="10" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/>
+    <text x="90" y="30" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#78350f">3. LLM 判定</text>
+    <text x="90" y="55" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#92400e">语义判断是否需要 Replan</text>
+    <text x="90" y="73" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#92400e">判断粒度：Step / Partial / Global</text>
+  </g>
+  <line x1="720" y1="135" x2="760" y2="135" stroke="#64748b" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Execute replan -->
+  <g transform="translate(760, 90)">
+    <rect width="100" height="90" rx="10" fill="#f3e8ff" stroke="#a855f7" stroke-width="2"/>
+    <text x="50" y="35" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="15" font-weight="700" fill="#581c87">4. 执行</text>
+    <text x="50" y="58" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#6b21a8">保留 / 修改</text>
+    <text x="50" y="76" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="12" fill="#6b21a8">/ 移除步骤</text>
+  </g>
+
+  <!-- Key principle -->
+  <g transform="translate(150, 240)">
+    <rect width="600" height="120" rx="12" fill="#ffffff" stroke="#334155" stroke-width="2"/>
+    <text x="300" y="35" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="16" font-weight="700" fill="#0f172a">核心原则</text>
+    <text x="300" y="65" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#475569">judgment 与 execution 必须是两次独立 LLM 调用，避免「既当裁判又当运动员」</text>
+    <text x="300" y="92" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="13" fill="#475569">优先 Step Replan → Partial Replan → Global Replan，最小化改动、最大化复用已有结果</text>
+  </g>
+</svg>

@@ -37,6 +37,7 @@ env/
 .vscode/
 *.swp
 *.swo
+.DS_Store
 
 # 测试/缓存
 .pytest_cache/
@@ -46,3 +47,8 @@ htmlcov/
 
 # Docker
 *.log
+
+# Node.js (SVG-to-PNG conversion tooling)
+node_modules/
+package-lock.json
+package.json

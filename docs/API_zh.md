@@ -332,7 +332,7 @@ curl -X POST http://localhost:8000/api/plan/generate \
 
 ---
 
-#### 2.2.2 评估 Plan 质量
+#### 2.2.3 评估 Plan 质量
 
 - **方法与路径**：`POST /api/plan/verify`
 - **描述**：从 G4C 五个维度评估 Plan 质量。
@@ -392,7 +392,7 @@ curl -X POST http://localhost:8000/api/plan/verify \
 
 ---
 
-#### 2.2.3 执行 Plan
+#### 2.2.4 执行 Plan
 
 - **方法与路径**：`POST /api/plan/execute`
 - **描述**：执行 Plan，逐步执行并触发 Checkpoint 检查。
@@ -507,7 +507,7 @@ curl -X POST http://localhost:8000/api/plan/execute \
 
 ---
 
-#### 2.2.4 迭代式 Plan 生成
+#### 2.2.5 迭代式 Plan 生成
 
 - **方法与路径**：`POST /api/plan/iterate`
 - **描述**：迭代式 Plan 生成，执行生成-评估-纠正循环，直到 Plan 质量达标或达到最大迭代次数。
@@ -582,7 +582,7 @@ curl -X POST http://localhost:8000/api/plan/iterate \
 
 ---
 
-#### 2.2.5 触发 Replan
+#### 2.2.6 触发 Replan
 
 - **方法与路径**：`POST /api/plan/replan`
 - **描述**：触发受控纠偏机制。执行过程中，基于新的 Goal、Context、Choice、Checkpoint 结果，对原计划进行受控修正。完整流程：检测触发 -> 代码判断 -> LLM 判断 -> 执行 Replan。
@@ -667,29 +667,15 @@ curl -X POST http://localhost:8000/api/plan/replan \
     "current_step_index": 0,
     "iteration_count": 0
   },
-  "replan_result": {
-    "retained_steps": [],
-    "modified_steps": [
-      {
-        "step_id": "step_1",
-        "reason": "版本变更，需重新下载 ES 8.x",
-        "change_type": "modified",
-        "modification_detail": "下载目标从 ES 7.x 改为 ES 8.x"
-      }
-    ],
-    "removed_steps": [],
-    "new_plan": null,
-    "replan_info": {
-      "max_replan_total": 3,
-      "used_replan_total": 1
-    }
-  }
+  "replan_result": null
 }
 ```
 
+> 注：当前实现中 `/api/plan/replan` 直接返回 Replan 后的 Plan，`replan_result` 字段为 `null`。
+
 ---
 
-#### 2.2.6 TCC Replan
+#### 2.2.7 TCC Replan
 
 - **方法与路径**：`POST /api/plan/tcc-replan`
 - **描述**：执行 TCC Replan（Try/Confirm/Cancel 三步法）。借鉴分布式事务 TCC 概念，仅适用于高失败成本、高外部依赖、高副作用风险的场景。
@@ -816,7 +802,7 @@ curl -X POST http://localhost:8000/api/plan/tcc-replan \
 
 ---
 
-#### 2.2.7 失败回溯
+#### 2.2.8 失败回溯
 
 - **方法与路径**：`POST /api/plan/trace`
 - **描述**：触发失败回溯与根因定位。核心概念：失败点 ≠ 根因点。从失败点开始反向追溯，找到根因点，并提供回滚点和 Replan 起点建议。
@@ -1802,36 +1788,15 @@ curl -X POST http://localhost:8000/api/evaluation/offline \
 ```json
 {
   "analysis": {
-    "goal_analysis": {
-      "score": 0.85,
-      "strengths": ["成功标准可量化"],
-      "weaknesses": ["缺少形容词标准定义"]
-    },
-    "context_analysis": {
-      "score": 0.7,
-      "strengths": ["已知事实清晰"],
-      "weaknesses": ["未识别关键约束"]
-    },
-    "choice_analysis": {
-      "score": 0.9,
-      "strengths": ["路径选择有证据支持"],
-      "weaknesses": []
-    },
-    "checkpoint_analysis": {
-      "score": 0.4,
-      "strengths": [],
-      "weaknesses": ["缺少 Checkpoint 定义"]
-    },
-    "correction_analysis": {
-      "score": 0.3,
-      "strengths": [],
-      "weaknesses": ["未定义任何纠正规则"]
-    },
-    "overall_score": 0.63,
-    "recommendations": [
-      "增加 Checkpoint 覆盖关键步骤",
-      "为常见失败场景定义 Correction 规则"
-    ]
+    "plan_id": null,
+    "score": 0.63,
+    "constraint_violations": [],
+    "checkpoint_issues": ["缺少 Checkpoint 定义"],
+    "goal_issues": ["缺少形容词标准定义"],
+    "choice_issues": [],
+    "correction_issues": ["未定义任何纠正规则"],
+    "checkpoint_sufficient": false,
+    "overall_assessment": "Overall score: 0.63; No constraint violations detected; Checkpoint count is insufficient; Goal definition has 1 issue(s); Path selection is reasonable; Correction mechanism has 1 issue(s)."
   }
 }
 ```
@@ -2219,6 +2184,8 @@ TAO 中的 Action 是面向目标的操作封装，而不是原始工具。良�
 - `ActionAvailability` 记录历史成功率，用于降低 unreliable Action 的优先级或临时禁用。
 - 信息增益排序优先选择能补足当前缺失槽位的 Action。
 - 大模型粗筛使用 Fast LLM 和少量上下文；精筛使用 Pro LLM 和完整上下文。
+
+> 注：当前 `coarse_filter` 已实现确定性筛选（意图/标签/规则/前置条件/权限/历史成功率），信息增益排序与 LLM 粗筛/精筛为设计扩展点，尚未在单一函数中完整落地。
 
 **执行前二次校验**
 

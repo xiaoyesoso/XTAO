@@ -390,6 +390,8 @@ print(result["used_loops"])
 print(result["final_output"])
 ```
 
+> 注：SDK 的 `run_tao` 当前未暴露 `supervisor_interval` 与 `supervisor_interval_seconds` 参数；如需调整 TAO 双层监督频率，请直接调用 REST `POST /api/tao/run`。
+
 #### Action 元数据与筛选
 
 `ActionCandidate` 支持扩展元数据，帮助引擎筛选并选择正确的 Action。可填写 `tags`、`intents`、`applicable_scenarios`、`permissions`、`cost`、`risk`、`alternatives` 等字段描述候选。
