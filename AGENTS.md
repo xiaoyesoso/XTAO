@@ -14,7 +14,7 @@ The project also implements a **Replan mechanism** (trigger detection, code+LLM 
 XTAO/
 ├── AGENTS.md                              # This file - AI Agent guidelines
 ├── README.md                              # English README
-├── README_zh.md                           # Chinese README
+├── README_en.md                           # English README
 ├── .gitignore                             # Git ignore rules
 ├── .env.example                           # Environment variable template
 ├── .env                                   # Environment variables (not in git)
@@ -338,6 +338,6 @@ docker run -p 8000:8000 --env-file .env xtao
 - Change `agent-plan-tao-action-selection`: **all tasks complete** (proposal → specs → design → tasks → implement)
 - Core engine fully implemented: G4C generation, verification, execution, correction, Replan, TCC Replan, failure tracing, trust state, backtracking (5 levels), candidate paths, cross-turn tracking, TAO/ReAct execution engine, and the `PlanOrchestrator` main entry point
 - Python SDK shipped (`xtao.sdk.XTAOClient`) with full live-server end-to-end verification
-- Docs: bilingual README (`README.md` / `README_zh.md`), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`)
+- Docs: bilingual README (`README.md` (Chinese) / `README_en.md` (English)), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`)
 - 64 unit tests passing (`tests/test_plan.py` + `tests/test_tao.py`)
 - Live LLM integration tested with SiliconFlow DeepSeek

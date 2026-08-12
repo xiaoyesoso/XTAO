@@ -660,6 +660,6 @@ async def evaluate(client: XTAOClient):
 
 ## 相关文档
 
-- [README_zh.md](../README_zh.md) —— 项目概览与部署。
+- [README.md](../README.md) —— 项目概览与部署。
 - [API_zh.md](API_zh.md) —— 原始 REST API 参考。
 - 源码：[`src/xtao/sdk/`](../src/xtao/sdk)
