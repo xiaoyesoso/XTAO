@@ -144,6 +144,34 @@ class PlanExecutor:
         Returns:
             Step execution output (string)
         """
+        system_prompt, user_prompt = self._build_step_prompt(step, plan)
+        response = await self.llm_service.chat(system_prompt, user_prompt)
+        return response
+
+    async def execute_step_stream(self, step: Step, plan: Plan):
+        """Execute a single step in streaming mode, yielding typed deltas.
+
+        Same prompt construction as execute_step; the only difference is the
+        LLM call streams token-by-token so callers can surface the intermediate
+        generation process. Yields ``{"type": "content"|"reasoning", "text": str}``
+        dicts so callers can distinguish the model's thinking from its output.
+
+        Args:
+            step: Step to execute
+            plan: Current Plan
+
+        Yields:
+            dict: ``{"type": "content"|"reasoning", "text": str}``
+        """
+        system_prompt, user_prompt = self._build_step_prompt(step, plan)
+        async for chunk in self.llm_service.chat_stream(system_prompt, user_prompt):
+            yield chunk
+
+    def _build_step_prompt(self, step: Step, plan: Plan) -> tuple[str, str]:
+        """Build (system_prompt, user_prompt) for executing a step.
+
+        Constraints are dynamically injected into the system prompt.
+        """
         system_prompt = (
             "You are the Plan executor, responsible for executing a single step and outputting the execution result.\n"
             "Please complete the task based on the step objective and Plan context, and output the execution result."
@@ -166,9 +194,7 @@ class PlanExecutor:
             f"Step reason: {step.reason}\n\n"
             f"Plan context:\n{plan.model_dump_json(indent=2)}"
         )
-
-        response = await self.llm_service.chat(system_prompt, user_prompt)
-        return response
+        return system_prompt, user_prompt
 
     async def run_checkpoint(
         self,

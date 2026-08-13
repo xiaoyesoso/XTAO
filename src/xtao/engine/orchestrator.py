@@ -34,7 +34,7 @@ This is the main entry point that coordinates all G4C subsystems:
 
 import time
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from xtao.models import Plan
 from xtao.models.plan import PlanStatus
@@ -116,11 +116,21 @@ class PlanOrchestrator:
             replan_engine=replan_engine,
         )
 
+    @staticmethod
+    def _emit(on_progress: Callable[[dict], None] | None, event: dict) -> None:
+        """Safely emit a progress event to the callback (no-op if absent)."""
+        if on_progress is not None:
+            try:
+                on_progress(event)
+            except Exception:
+                logger.debug("progress callback failed", exc_info=True)
+
     async def run(
         self,
         user_input: str,
         conversation_history: str = "",
         config: OrchestratorConfig | None = None,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> OrchestratorResult:
         """Run the full plan lifecycle: generate -> verify -> execute -> correct.
 
@@ -130,6 +140,9 @@ class PlanOrchestrator:
             user_input: User's goal/request
             conversation_history: Conversation history for context
             config: Orchestration configuration (uses defaults if None)
+            on_progress: Optional sync callback receiving progress events
+                (phase / plan_generated / step_* / checkpoint / replan / done / error).
+                Used by the streaming endpoint to push SSE events to the client.
 
         Returns:
             OrchestratorResult with final plan, execution trace, and metrics
@@ -139,89 +152,116 @@ class PlanOrchestrator:
 
         errors: list[str] = []
         start_time = time.time()
-
-        # ── Phase 1: Generate Plan ──────────────────────────────
-        logger.info("Phase 1: Generating Plan")
-        plan, verification_results = await self._generate_plan(
-            user_input, conversation_history, config
-        )
-
-        iteration_count = plan.iteration_count
-        verification_score = None
-        verification_passed = None
-
-        # ── Phase 2: Verify Plan (optional) ─────────────────────
-        if config.verify_before_execute and verification_results:
-            logger.info("Phase 2: Verifying Plan")
-            last_result = verification_results[-1]
-            verification_score = last_result.score if hasattr(last_result, "score") else None
-            verification_passed = (
-                self.plan_verifier.is_passing(last_result, config.verification_threshold)
-                if verification_score is not None
-                else None
-            )
-
-            if verification_passed is False:
-                logger.warning("Plan verification failed (score=%.2f), proceeding anyway", verification_score)
-
-        # ── Phase 3: Execute Plan ───────────────────────────────
-        logger.info("Phase 3: Executing Plan")
-        step_records: list[StepExecutionRecord] = []
-        replan_count = 0
+        timings: dict[str, int] = {}
 
         try:
-            plan, step_records, replan_count = await self._execute_with_correction(
-                plan, config, errors
+            # ── Phase 1: Generate Plan ──────────────────────────────
+            logger.info("Phase 1: Generating Plan")
+            t0 = time.time()
+            self._emit(on_progress, {"type": "phase", "phase": "generate", "message": "正在生成 Plan…"})
+            plan, verification_results = await self._generate_plan(
+                user_input, conversation_history, config, on_progress=on_progress
             )
+            gen_ms = int((time.time() - t0) * 1000)
+            timings["generate_ms"] = gen_ms
+            self._emit(on_progress, {"type": "plan_generated", "plan": plan.model_dump(), "elapsed_ms": gen_ms})
+
+            iteration_count = plan.iteration_count
+            verification_score = None
+            verification_passed = None
+
+            # ── Phase 2: Verify Plan (optional) ─────────────────────
+            if config.verify_before_execute and verification_results:
+                logger.info("Phase 2: Verifying Plan")
+                t1 = time.time()
+                last_result = verification_results[-1]
+                verification_score = last_result.score if hasattr(last_result, "score") else None
+                verification_passed = (
+                    self.plan_verifier.is_passing(last_result, config.verification_threshold)
+                    if verification_score is not None
+                    else None
+                )
+                verify_ms = int((time.time() - t1) * 1000)
+                timings["verify_ms"] = verify_ms
+                self._emit(on_progress, {
+                    "type": "phase",
+                    "phase": "verify",
+                    "score": verification_score,
+                    "passed": verification_passed,
+                    "elapsed_ms": verify_ms,
+                })
+
+                if verification_passed is False:
+                    logger.warning("Plan verification failed (score=%.2f), proceeding anyway", verification_score)
+
+            # ── Phase 3: Execute Plan ───────────────────────────────
+            logger.info("Phase 3: Executing Plan")
+            total_steps = len(plan.choice.steps)
+            t2 = time.time()
+            self._emit(on_progress, {"type": "phase", "phase": "execute", "total_steps": total_steps})
+            step_records: list[StepExecutionRecord] = []
+            replan_count = 0
+
+            try:
+                plan, step_records, replan_count = await self._execute_with_correction(
+                    plan, config, errors, on_progress=on_progress
+                )
+            except Exception as e:
+                errors.append(f"Execution error: {e}")
+                plan.status = PlanStatus.FAILED
+
+            timings["execute_ms"] = int((time.time() - t2) * 1000)
+
+            # ── Phase 4: Build result ───────────────────────────────
+            duration_ms = int((time.time() - start_time) * 1000)
+
+            # Determine final status and extract clarify message from step records
+            clarify_message: str | None = None
+            if plan.status == PlanStatus.COMPLETED:
+                final_status = "completed"
+            elif plan.status == PlanStatus.ABORTED:
+                final_status = "aborted"
+            elif plan.status == PlanStatus.FAILED:
+                final_status = "failed"
+            else:
+                final_status = "failed"
+
+            # Extract clarify message from the first clarify-type step record
+            if final_status == "failed" and step_records:
+                for rec in step_records:
+                    if rec.correction_applied == "clarify" and rec.output:
+                        clarify_message = rec.output
+                        final_status = "clarify_needed"
+                        break
+
+            result = OrchestratorResult(
+                plan=plan,
+                status=final_status,
+                step_records=step_records,
+                replan_count=replan_count,
+                iteration_count=iteration_count,
+                verification_score=verification_score,
+                verification_passed=verification_passed,
+                errors=errors,
+                clarify_message=clarify_message,
+            )
+
+            logger.info(
+                "Orchestration complete: status=%s, steps=%d, replans=%d, duration=%dms, timings=%s",
+                final_status, len(step_records), replan_count, duration_ms, timings,
+            )
+            self._emit(on_progress, {"type": "done", "result": result.model_dump(), "timings": timings, "total_ms": duration_ms})
+            return result
         except Exception as e:
-            errors.append(f"Execution error: {e}")
-            plan.status = PlanStatus.FAILED
-
-        # ── Phase 4: Build result ───────────────────────────────
-        duration_ms = int((time.time() - start_time) * 1000)
-
-        # Determine final status and extract clarify message from step records
-        clarify_message: str | None = None
-        if plan.status == PlanStatus.COMPLETED:
-            final_status = "completed"
-        elif plan.status == PlanStatus.ABORTED:
-            final_status = "aborted"
-        elif plan.status == PlanStatus.FAILED:
-            final_status = "failed"
-        else:
-            final_status = "failed"
-
-        # Extract clarify message from the first clarify-type step record
-        if final_status == "failed" and step_records:
-            for rec in step_records:
-                if rec.correction_applied == "clarify" and rec.output:
-                    clarify_message = rec.output
-                    final_status = "clarify_needed"
-                    break
-
-        result = OrchestratorResult(
-            plan=plan,
-            status=final_status,
-            step_records=step_records,
-            replan_count=replan_count,
-            iteration_count=iteration_count,
-            verification_score=verification_score,
-            verification_passed=verification_passed,
-            errors=errors,
-            clarify_message=clarify_message,
-        )
-
-        logger.info(
-            "Orchestration complete: status=%s, steps=%d, replans=%d, duration=%dms",
-            final_status, len(step_records), replan_count, duration_ms,
-        )
-        return result
+            self._emit(on_progress, {"type": "error", "message": str(e)})
+            raise
 
     async def _generate_plan(
         self,
         user_input: str,
         conversation_history: str,
         config: OrchestratorConfig,
+        on_progress: Callable[[dict], None] | None = None,
     ) -> tuple[Plan, list]:
         """Phase 1: Generate Plan using G4C methodology.
 
@@ -240,7 +280,9 @@ class PlanOrchestrator:
             plan, results = await loop.run(user_input, conversation_history)
             return plan, results
         else:
-            plan = await self.plan_generator.generate(user_input, conversation_history)
+            plan = await self.plan_generator.generate(
+                user_input, conversation_history, on_progress=on_progress
+            )
             return plan, []
 
     async def _execute_with_correction(
@@ -248,6 +290,7 @@ class PlanOrchestrator:
         plan: Plan,
         config: OrchestratorConfig,
         errors: list[str],
+        on_progress: Callable[[dict], None] | None = None,
     ) -> tuple[Plan, list[StepExecutionRecord], int]:
         """Phase 3: Execute plan step by step with full correction pipeline.
 
@@ -274,24 +317,64 @@ class PlanOrchestrator:
             step = plan.choice.steps[i]
             plan.current_step_index = i
             step.status = "running"
+            step_t0 = time.time()
 
             record = StepExecutionRecord(
                 step_id=step.id,
                 step_objective=step.objective,
                 status="running",
             )
+            self._emit(on_progress, {
+                "type": "step_start",
+                "index": i,
+                "total": len(plan.choice.steps),
+                "step_id": step.id,
+                "objective": step.objective,
+                "tao": bool(config.use_tao and self.tao_engine is not None),
+            })
 
             # Execute step (via TAO loop when enabled)
             tao_result = None
             try:
+                exec_t0 = time.time()
                 if config.use_tao and self.tao_engine is not None:
                     record.tao_used = True
                     output, tao_result = await self._execute_step_via_tao(step, plan, config)
                     record.tao_loops = tao_result.used_loops
                     record.tao_exit = tao_result.exit_type.value
+                elif on_progress is not None:
+                    # Streaming path: yield token deltas to the client as the
+                    # LLM generates the step output, then keep the full text.
+                    content_chunks: list[str] = []
+                    async for chunk in self.plan_executor.execute_step_stream(step, plan):
+                        kind = chunk.get("type", "content")
+                        text = chunk.get("text", "")
+                        if kind == "reasoning":
+                            self._emit(on_progress, {
+                                "type": "step_reasoning_delta",
+                                "step_id": step.id,
+                                "delta": text,
+                            })
+                        else:
+                            content_chunks.append(text)
+                            self._emit(on_progress, {
+                                "type": "step_output_delta",
+                                "step_id": step.id,
+                                "delta": text,
+                            })
+                    output = "".join(content_chunks)
                 else:
                     output = await self.plan_executor.execute_step(step, plan)
-                record.output = output[:500]  # Truncate for storage
+                exec_ms = int((time.time() - exec_t0) * 1000)
+                record.output = output[:4000]  # Truncate for storage
+                self._emit(on_progress, {
+                    "type": "step_output",
+                    "step_id": step.id,
+                    "output": record.output,
+                    "tao_used": record.tao_used,
+                    "tao_loops": record.tao_loops,
+                    "elapsed_ms": exec_ms,
+                })
             except Exception as e:
                 errors.append(f"Step {step.id} execution error: {e}")
                 record.status = "failed"
@@ -363,9 +446,10 @@ class PlanOrchestrator:
                     plan.status = PlanStatus.FAILED
                     return plan, step_records, replan_count
 
-            # Run checkpoint
-            checkpoint = self.plan_executor._find_checkpoint(plan, step.id)
+            # Run checkpoint (skippable for faster execution)
+            checkpoint = None if config.skip_checkpoint else self.plan_executor._find_checkpoint(plan, step.id)
             if checkpoint:
+                ck_t0 = time.time()
                 try:
                     results = await self.plan_executor.run_checkpoint(checkpoint, output, plan)
                     plan.check_results.extend(results)
@@ -376,6 +460,14 @@ class PlanOrchestrator:
                     record.checkpoint_passed = False
                     record.checkpoint_results = [{"error": str(e)[:200]}]
                     results = []
+
+                ck_ms = int((time.time() - ck_t0) * 1000)
+                self._emit(on_progress, {
+                    "type": "checkpoint",
+                    "step_id": step.id,
+                    "passed": record.checkpoint_passed,
+                    "elapsed_ms": ck_ms,
+                })
 
                 # Handle checkpoint failure
                 if not record.checkpoint_passed:
@@ -438,6 +530,12 @@ class PlanOrchestrator:
                             if did_replan:
                                 replan_count += 1
                                 record.replan_triggered = True
+                                self._emit(on_progress, {
+                                    "type": "replan",
+                                    "step_id": step.id,
+                                    "count": replan_count,
+                                    "correction": record.correction_applied,
+                                })
 
                                 # ── Record Replan Event ──────────────────
                                 if self.replan_evaluator:
@@ -473,6 +571,13 @@ class PlanOrchestrator:
             step.status = "done"
             record.status = "done"
             step_records.append(record)
+            self._emit(on_progress, {
+                "type": "step_done",
+                "step_id": step.id,
+                "status": "done",
+                "checkpoint_passed": record.checkpoint_passed,
+                "elapsed_ms": int((time.time() - step_t0) * 1000),
+            })
 
             # ── Trust State: mark step output as available ───────
             if config.enable_trust_state and self.trust_state_manager:

@@ -1,4 +1,5 @@
 import type { OrchestratorConfig } from '../types';
+import { useI18n } from '../i18n';
 
 interface Props {
   config: Partial<OrchestratorConfig>;
@@ -7,11 +8,16 @@ interface Props {
 
 export function SettingsPanel({ config, onChange }: Props) {
   const update = (patch: Partial<OrchestratorConfig>) => onChange({ ...config, ...patch });
+  const { t, lang } = useI18n();
 
   return (
     <aside className="settings-panel">
-      <h2>运行配置</h2>
-      <p className="settings-hint">这些参数会作为 <code>config</code> 传入 <code>/api/plan/run</code>。</p>
+      <h2>{t('settings.title')}</h2>
+      <p className="settings-hint">
+        {lang === 'zh'
+          ? '这些参数会作为 config 传入 /api/plan/run。'
+          : 'These parameters are passed as config to /api/plan/run.'}
+      </p>
 
       <label className="field toggle">
         <input
@@ -19,7 +25,16 @@ export function SettingsPanel({ config, onChange }: Props) {
           checked={!!config.use_tao}
           onChange={(e) => update({ use_tao: e.target.checked })}
         />
-        <span>启用 TAO 步骤级执行</span>
+        <span>{t('settings.useTao')}</span>
+      </label>
+
+      <label className="field toggle">
+        <input
+          type="checkbox"
+          checked={!!config.skip_checkpoint}
+          onChange={(e) => update({ skip_checkpoint: e.target.checked })}
+        />
+        <span>{t('settings.skipCheckpoint')}</span>
       </label>
 
       <label className="field toggle">
@@ -28,11 +43,11 @@ export function SettingsPanel({ config, onChange }: Props) {
           checked={!!config.enable_tcc_replan}
           onChange={(e) => update({ enable_tcc_replan: e.target.checked })}
         />
-        <span>启用 TCC Replan（高风险场景）</span>
+        <span>{t('settings.tccReplan')}</span>
       </label>
 
       <label className="field">
-        <span>最大 Replan 次数</span>
+        <span>{t('settings.maxReplan')}</span>
         <input
           type="number"
           min={0}
@@ -43,7 +58,7 @@ export function SettingsPanel({ config, onChange }: Props) {
       </label>
 
       <label className="field">
-        <span>验证阈值</span>
+        <span>{t('settings.verifyThreshold')}</span>
         <input
           type="number"
           min={0}
@@ -55,7 +70,7 @@ export function SettingsPanel({ config, onChange }: Props) {
       </label>
 
       <label className="field">
-        <span>TAO 最大循环数</span>
+        <span>{t('settings.taoMaxLoops')}</span>
         <input
           type="number"
           min={1}

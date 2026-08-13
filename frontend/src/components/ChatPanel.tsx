@@ -1,6 +1,8 @@
 import { useState, type KeyboardEvent } from 'react';
 import type { ChatMessage } from '../App';
+import { useI18n } from '../i18n';
 import { ResultCard } from './ResultCard';
+import { LiveProgress } from './LiveProgress';
 
 interface Props {
   messages: ChatMessage[];
@@ -9,6 +11,7 @@ interface Props {
 
 export function ChatPanel({ messages, onSend }: Props) {
   const [input, setInput] = useState('');
+  const { t, lang } = useI18n();
 
   const submit = () => {
     const text = input.trim();
@@ -24,16 +27,32 @@ export function ChatPanel({ messages, onSend }: Props) {
     }
   };
 
+  const examples = lang === 'zh'
+    ? [
+        '帮我把一份 3 页财报总结成 5 个要点',
+        '调研并对比三个主流向量数据库的优缺点',
+        '规划一次为期 5 天的东京行程',
+      ]
+    : [
+        'Summarize a 3-page financial report into 5 key points',
+        'Research and compare three mainstream vector databases',
+        'Plan a 5-day trip to Tokyo',
+      ];
+
+  const placeholder = lang === 'zh'
+    ? '输入任务，Enter 发送，Shift+Enter 换行'
+    : 'Enter task, Enter to send, Shift+Enter for newline';
+
   return (
     <section className="chat-panel">
       <div className="messages">
         {messages.length === 0 && (
           <div className="empty-hint">
-            <p>输入一个任务，例如：</p>
+            <p>{lang === 'zh' ? '输入一个任务，例如：' : 'Try one of these tasks:'}</p>
             <ul>
-              <li>帮我把一份 3 页财报总结成 5 个要点</li>
-              <li>调研并对比三个主流向量数据库的优缺点</li>
-              <li>规划一次为期 5 天的东京行程</li>
+              {examples.map((ex) => (
+                <li key={ex}>{ex}</li>
+              ))}
             </ul>
           </div>
         )}
@@ -41,20 +60,22 @@ export function ChatPanel({ messages, onSend }: Props) {
           <div key={m.id} className={`msg msg-${m.role}`}>
             {m.role === 'user' ? (
               <div className="bubble user-bubble">{m.content}</div>
+            ) : m.stream ? (
+              <LiveProgress stream={m.stream} />
             ) : m.loading ? (
               <div className="bubble assistant-bubble loading">
                 <span className="dot" />
                 <span className="dot" />
                 <span className="dot" />
-                <span className="loading-text">XTAO 正在规划与执行…</span>
+                <span className="loading-text">{t('chat.thinking')}</span>
               </div>
             ) : m.error ? (
               <div className="bubble assistant-bubble error-bubble">
-                <strong>调用失败</strong>
+                <strong>{t('chat.error')}</strong>
                 <pre>{m.error}</pre>
               </div>
             ) : m.result ? (
-              <ResultCard result={m.result} />
+              <ResultCard result={m.result} timings={m.timings} totalMs={m.totalMs} />
             ) : null}
           </div>
         ))}
@@ -64,11 +85,11 @@ export function ChatPanel({ messages, onSend }: Props) {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKey}
-          placeholder="输入任务，Enter 发送，Shift+Enter 换行"
+          placeholder={placeholder}
           rows={2}
         />
         <button onClick={submit} disabled={!input.trim()}>
-          发送
+          {t('chat.send')}
         </button>
       </div>
     </section>

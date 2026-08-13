@@ -1,38 +1,42 @@
-# 我把 Agent 的 Plan 与执行做成了「运行时对象」，它终于不会在半路上自己跑偏了
+# Agent 跑偏这件事，我忍了很久了
 
-> **编者按**，本文来自一个真实开源项目的复盘，写的是一套叫 **XTAO** 的 Agent 规划与执行框架。它用 **G4C** 做 Plan 生成，用 **TAO（Think-Action-Observation，思考-行动-观察）** 做步骤级执行，用 **Replan** 做执行中的自我修正。读完这篇，你会对「为什么 Agent 做着做着就偏了」「怎么让 Plan 自己知道错了还知道怎么改」有一个完全不一样的理解。
+> **编者按**，本文来自一个真实开源项目的复盘，写的是一套叫 **XTAO** 的 Agent 规划与执行框架。它用 **G4C** 做 Plan 生成，用 **TAO（Think-Action-Observation）** 做步骤级执行，用 **Replan** 做执行中的自我修正。读完这篇，你会对「为什么 Agent 做着做着就偏了」「怎么让 Plan 自己知道错了还知道怎么改」有一个完全不一样的理解。
 >
-> GitHub 地址：https://github.com/xiaoyesoso/XTAO
+> GitHub 地址，https://github.com/xiaoyesoso/XTAO
 
 ---
 
-故事是这样的。
+Agent 跑偏这件事，我忍了很久了。
 
-最近我一直在跟 Agent 的 Plan 较劲。
+每次看着 Agent 做着做着就偏离目标，日志里报的错跟真正的病根隔了十万八千里，我就一阵头大。忍了很久，终于忍不了了，决定自己动手搞一套。
 
 起因特别具体。我手里有一个自动处理 PDF 的工作流，原本想得挺美好，用户丢进来一份财报，Agent 先读、再总结、再生成图表、最后输出一份一页纸的摘要。结果跑起来以后，bug 接踵而至。
 
 印象最深的一次，财报里某一页的页脚有补充说明，Agent 在「分段」那一步把它漏了，到「摘要」那一步自然就少了关键数字。但日志里报错的位置，是最后格式化输出那一环。我当时就愣住了。
 
-我盯着错误信息看了半天，差点直接去改格式化模块。后来冷静下来才意识到，**失败点不等于根因点**。格式化那一步只是老老实实地把脏数据输出了，真正的病根在更早的分段那一步。
+我盯着错误信息看了半天，差点直接去改格式化模块。后来冷静下来才意识到，**失败点不等于根因点**。格式化那一步只是老老实实地把脏数据输出了，真正的病根在更早的分段那一步。。。
 
 这种体验，做 Agent 的人应该都懂。
 
 我们太习惯把 Plan 当成一个「步骤列表」去执行，只要有一步走不通，就局部修一下。但真正的麻烦不是某一步报错，而是前面某一步已经悄悄错了，后面的所有步骤都在这个错的地基上继续盖楼。等到大楼塌了，你才发现地基有问题。
 
-所以，我设计 XTAO 的时候，有两个最核心的判断。
+所以我自己搞了一套叫 XTAO 的框架，开源了。说实话我也不确定这套方案是不是最优解，但至少跑下来，Agent 终于不会在半路上自己跑偏了。
+
+我设计 XTAO 的时候，有两个最核心的判断。
 
 第一，**XTAO 要解决的不仅是 Agent 的「规划」问题，更是 Agent 的「执行」问题**。生成一份好 Plan 只是起点，真正的挑战在于 Plan 跑起来之后，如何感知偏差、定位根因、自我修正。
 
 第二，**Plan 不应该是一个步骤列表，而应该是一个可检查、可纠偏、可执行的运行时对象。**
 
+你想想看，Plan 是活的。它在执行过程中 status 会变，checkpoint 结果会累积，信任状态会流转。它不是一份死的剧本，它是一份能自我感知的运行时对象。
+
 ---
 
-我把这套方法叫做 **G4C**，五个字母分别对应 Goal、Context、Choice、Checkpoint、Correction。
-
-它看起来像是五个抽象的概念，但每一环都是冲着一种「不确定性」去的。
+我把生成 Plan 的这套方法叫做 **G4C**，五个字母分别对应 Goal、Context、Choice、Checkpoint、Correction。
 
 ![G4C 五要素架构图](images/g4c_architecture.png)
+
+每一环都是冲着一种「不确定性」去的。
 
 Goal 回答的是，到底要达成什么，成功的标准是什么。没有明确成功标准的 Plan，就是一台没有目的地的自动驾驶汽车。
 
@@ -44,24 +48,11 @@ Checkpoint 回答的是，怎么知道这一步做对了。里程碑、关键中
 
 Correction 回答的是，一旦发现偏离，Plan 自身要知道怎么处理，而不是等人在屏幕前救场。
 
-五个问题回答完，Plan 才从「看上去合理」变成「真的能跑」。
-
-在 XTAO 的代码里，这五个要素被固化成 Pydantic 模型，下面这一段是 Plan 复合对象的核心结构。
+在 XTAO 的代码里，这五个要素被固化成 Pydantic 模型，Plan 复合对象的核心结构长这样。
 
 ```python
 # src/xtao/models/plan.py
-from xtao.models import Goal, Context, Choice, Checkpoint, Correction
-
 class Plan(BaseModel):
-    """Plan runtime object, contains five G4C elements.
-
-    Attributes:
-        goal: What to achieve and how to judge success.
-        context: Known facts, missing info, and hard/soft constraints.
-        choice: Selected path, reasons, and executable steps.
-        checkpoints: How to verify each key step.
-        corrections: Recovery strategies when deviation occurs.
-    """
     goal: Goal                      # 目标与成功标准
     context: Context                # 上下文与约束
     choice: Choice                  # 路径决策与步骤
@@ -71,7 +62,7 @@ class Plan(BaseModel):
     status: PlanStatus = PlanStatus.READY # ready/running/completed/failed
 ```
 
-`Plan` 不是一个 JSON 配置，它是一个有状态的对象。执行过程中，status 会变，checkpoint 结果会累积，信任状态会流转。你想想看，**Plan 是活的。**
+坦率的讲，一开始我也没想搞这么重。但跑了几轮下来发现，如果 Plan 本身不知道自己要什么（Goal 缺失）、不知道约束在哪（Context 缺失）、不知道怎么算对了（Checkpoint 缺失），那执行引擎再强也是白搭。五要素不是过度设计，是被现实毒打出来的。说真的，这个坑我踩了好几次才想明白。
 
 ---
 
@@ -87,11 +78,11 @@ Plan 再完美，也架不住执行时遇到意外。用户临时加需求、工
 
 判定阶段的第一步是触发检测。Replan 有三种触发时机，工具调用失败（非瞬态错误）、上下文变化（用户加了约束或补充了信息）、假设违反（Checkpoint 没通过）。
 
-第二步是代码判定。代码负责把瞬态错误筛掉，比如网络超时、API 限流，这些直接重试就行，不需要上升到 Replan。
+第二步是代码判定。代码负责把瞬态错误筛掉，比如网络超时、API 限流，这些直接重试就行，不需要上升到 Replan。这一步特别重要，因为如果不筛掉瞬态错误，每次网络抖动都触发一次 Replan，那成本就炸了。
 
 第三步是 LLM 判定。如果代码判定认为不是瞬态错误，就交给 LLM 做语义判断，决定是否需要 Replan，以及需要哪种粒度。
 
-这一步和下一步执行，**必须是两次独立的 LLM 调用**。judgment 和 execution 绝不能混在一起。为什么？因为一旦混在一起，LLM 又当裁判又当运动员，结果经常是「它觉得自己没问题，于是就没问题」。
+这里有一条铁律，**判定和执行必须是两次独立的 LLM 调用**。judgment 和 execution 绝不能混在一起。为什么？因为一旦混在一起，LLM 又当裁判又当运动员，结果经常是「它觉得自己没问题，于是就没问题」。
 
 在代码里，ReplanEngine 的入口长这样。
 
@@ -120,6 +111,8 @@ class ReplanEngine:
         return await self.llm_judge(trigger, plan, user_input)
 ```
 
+你看，`judge` 方法只负责判定，不负责执行。判定完了，`execute_replan` 才上场。两次 LLM 调用，各管各的。
+
 LLM 判定完，进入执行阶段。XTAO 把 Replan 分成三种粒度，Step Replan、Partial Replan、Global Replan。
 
 Step Replan 只改当前这一步，前面的结果全部保留，成本最低。
@@ -130,7 +123,7 @@ Global Replan 从零生成一份新 Plan，这是最后的手段。
 
 优先级永远是 Step → Partial → Global。原则就一句话，**最小化改动范围，最大化复用已有结果。**
 
-代码里的 ReplanResult 会明确记录每一步的命运。
+还有一个防止无限循环的机制。`replan_info` 里的 `max_replan_total` 默认是 3，每 Replan 一次 `used_replan_total` 就加 1，达到上限后强制进入人工确认或 Abort。有意思的是，这个计数不是存在外部状态里，而是烙印在 Plan 本身的 `iteration_count` 字段里。这样 Plan 在序列化、传递、恢复的时候，计数不会丢。
 
 ```python
 class ReplanResult(BaseModel):
@@ -145,7 +138,7 @@ class ReplanResult(BaseModel):
     replan_info: ReplanInfo            # max_replan_total / used_replan_total
 ```
 
-`replan_info` 是防止无限循环的关键。`max_replan_total` 默认是 3，`used_replan_total` 每 Replan 一次就加 1，达到上限后强制进入人工确认或 Abort。
+`retained_steps`、`modified_steps`、`removed_steps` 三个列表明确记录了每一步的命运。哪些保留、哪些改了、哪些删了，都有据可查。
 
 ---
 
@@ -162,6 +155,22 @@ class ReplanResult(BaseModel):
 FailureTracer 的分工很明确，代码负责确定性操作，LLM 负责语义判断。
 
 代码做的事情包括沿依赖链反向遍历构建回溯链、找到最近的 Checkpoint、检测循环依赖。LLM 做的事情包括语义层面的根因定位、判断目标是否发生变化、分析约束影响、判断中间结果能否复用。
+
+这里有一个我觉得特别精妙的设计。我跟你说，第一次看到这段代码的时候我直接拍大腿。FailureTracer 最后会做一个 `review_checkpoint_reliability`，**代码的判断会覆盖 LLM 的判断**。其中有一条规则是，如果失败点离最近的 Checkpoint 太近（≤2 步），就怀疑 Checkpoint 本身漏检了。
+
+你想想看，这个直觉其实很朴素。如果 Checkpoint 刚通过没多久就出错了，要么 Checkpoint 检查不够全面，要么 Checkpoint 之后的环境或数据发生了变化。不管哪种情况，盲目信任那个 Checkpoint 都是危险的。
+
+```python
+# Rule 2: 失败点离 Checkpoint 太近，怀疑 Checkpoint 漏检
+if 0 < steps_between <= 2:
+    logger.warning(
+        "Failure point is only %d steps from nearest Checkpoint, "
+        "suspect Checkpoint missed", steps_between
+    )
+    return False  # checkpoint_reliable = False
+```
+
+这种分层的意义在于，LLM 很贵、很慢、还不稳定，所以能交给代码的绝不交给 LLM。LLM 只处理「这个错误到底是因为语义理解错了，还是工具参数错了」这种非确定性问题。
 
 在 XTAO 里，调用一次回溯只需要一个请求。
 
@@ -188,7 +197,7 @@ async def trace(
     return self.merge_results(chain, nearest_checkpoint, llm_result)
 ```
 
-这种分层的意义在于，LLM 很贵、很慢、还不稳定，所以能交给代码的绝不交给 LLM。LLM 只处理「这个错误到底是因为语义理解错了，还是工具参数错了」这种非确定性问题。
+代码先建链，LLM 后定位，最后合并结果。整个项目反复出现这个模式，代码先、LLM 后。
 
 ---
 
@@ -222,12 +231,16 @@ class TrustStateManager:
                 for dep_key, entry in self._facts.items():
                     if current in entry.depends_on and entry.trust_state != TrustState.DIRTY:
                         entry.trust_state = TrustState.DIRTY
-                        changes.append(TrustStateChange(key=dep_key, old=entry.trust_state, new=TrustState.DIRTY))
+                        changes.append(TrustStateChange(
+                            key=dep_key, old=entry.trust_state, new=TrustState.DIRTY
+                        ))
                         queue.append(dep_key)
         return changes
 ```
 
 注意，级联标记是纯代码实现的，不依赖 LLM。因为遍历依赖图这件事，图算法比 LLM 快、准、稳。
+
+还有一个细节我觉得值得说。BFS 遍历的时候，即使某个节点已经是 INVALID 或 DIRTY 不需要重新标记，代码仍然会把它加入队列继续遍历下游。注释里写得很清楚，「Whether marked or not, continue traversing downstream to ensure the entire chain is covered」。为啥这么设计？因为依赖链可能有分叉，一个节点被标记了不代表它的下游也全被标记了。必须走完整条链，才不会遗漏。其实吧，这种边界情况很容易被忽略，我自己一开始写的时候就没考虑到。
 
 回溯的时候，FailureTracer 会优先看 SUSPICIOUS 和 DIRTY 的事实，跳过 VERIFIED。这样就避免了在已经验证过的地方浪费时间。
 
@@ -258,7 +271,7 @@ XTAO 对外暴露了 30 多个 REST 接口，但真正推荐用的是 **POST /ap
 ```
 /api/plan/run
   ├── 生成 Plan (G4C 五要素)
-  ├── 可选：评估 Plan (G4C 五维评分)
+  ├── 可选，评估 Plan (G4C 五维评分)
   ├── 执行 Plan (逐步骤 + Checkpoint)
   │     如果 Checkpoint 失败
   │     ├── FailureTracer.trace() 定位根因
@@ -269,9 +282,37 @@ XTAO 对外暴露了 30 多个 REST 接口，但真正推荐用的是 **POST /ap
   └── 返回 OrchestratorResult
 ```
 
-也就是说，单个接口内部调用了多个子系统，但对外只暴露一个统一的调用方式。这种设计的好处是，普通用户不用关心底层细节，一个请求就能跑完整个生命周期。
+单个接口内部调用了多个子系统，但对外只暴露一个统一的调用方式。普通用户不用关心底层细节，一个请求就能跑完整个生命周期。
 
-如果你想自己控制每一步，也可以直接调用下面的原子接口。
+而且这个接口还有一个流式版本 **POST /api/plan/run/stream**，通过 SSE 实时把中间过程推到前端。这里有一个我觉得设计得挺巧妙的点，orchestrator 本身完全不知道自己在流式输出。它只是接受一个 `on_progress` 回调函数，在关键节点调用一下。SSE 的桥接是在 API 路由层用 asyncio.Queue 做的。
+
+```python
+# 路由层，同步回调 + Queue 桥接异步 SSE
+queue: asyncio.Queue = asyncio.Queue()
+
+def on_progress(event: dict) -> None:
+    queue.put_nowait(event)  # 同步函数，从 orchestrator 内部调用
+
+async def event_stream():
+    task = asyncio.create_task(
+        orchestrator.run(..., on_progress=on_progress)
+    )
+    while True:
+        event = await queue.get()
+        yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        if event.get("type") in ("done", "error"):
+            break
+```
+
+这样 orchestrator 的核心逻辑完全不感知传输层，流式和非流式共用同一个 `run` 方法。如果你只是想跑个任务拿结果，用非流式。如果你想在界面上实时展示 Plan 生成和步骤执行的过程，用流式。同一个引擎，两种用法。
+
+前端 Demo 就是用的流式接口。在聊天框输入任务，就能实时看到 Plan 生成、步骤执行、Checkpoint 验证的完整过程，包括 LLM 推理阶段的逐字输出。最终结果支持 Markdown 渲染，界面支持中英文一键切换。
+
+![前端 Demo](images/frontend_demo.jpg)
+
+每一步的耗时也会实时显示在界面上，LLM 调用花了多少秒、Checkpoint 花了多少秒，一目了然。方便你定位性能瓶颈。
+
+如果你想自己控制每一步，也可以用 SDK 调用原子接口。
 
 ```python
 from xtao.sdk import XTAOClient
@@ -288,7 +329,7 @@ async with XTAOClient(base_url="http://localhost:8000") as client:
     score = await client.verify_plan(plan)
 ```
 
-SDK 复用了 `xtao.models` 里的 Pydantic 模型，所以你可以直接传模型实例，不用手写 JSON。
+SDK 复用了 `xtao.models` 里的 Pydantic 模型，你可以直接传模型实例，不用手写 JSON。
 
 ---
 
@@ -306,17 +347,7 @@ result_reuse_rate = reused_results / total_results
 
 `reused_results` 是 Replan 后仍然可用的中间结果数量。`total_results` 是 Replan 发生前已经产生的中间结果总数。
 
-这个公式看似简单，但每一项都有讲究。`total_results` 不是简单的步骤数，而是所有被 TrustStateManager 记录的中间事实。`reused_results` 则是经过级联标记后仍然保持 VERIFIED 或 AVAILABLE 状态的事实数量。只有当一个结果被真正复用在新 Plan 中，而不是仅仅没有被标记为 DIRTY，才算入 `reused_results`。
-
-同样的，根因定位准确率也可以形式化，
-
-```
-root_cause_accuracy = correct_root_cause_cases / total_failure_cases
-```
-
-`correct_root_cause_cases` 是 FailureTracer 定位的根因点与人工标注或故障注入的真实根因点一致的案例数。`total_failure_cases` 是总失败案例数。
-
-这里的关键是「一致」的定义。我们不要求完全精确到同一个 step_id，而是要求根因点位于同一个语义单元内。比如真实根因是「加载用户画像时错误复用了电子产品类目的价格偏好」，而模型定位到「load_user_profile 这一步」，我们就认为正确。
+这个公式看着简单，但每一项都有讲究。`total_results` 不是简单的步骤数，而是所有被 TrustStateManager 记录的中间事实。`reused_results` 则是经过级联标记后仍然保持 VERIFIED 或 AVAILABLE 状态的事实数量。只有当一个结果被真正复用在新 Plan 中，而不是仅仅没有被标记为 DIRTY，才算入 `reused_results`。
 
 ---
 
@@ -324,7 +355,7 @@ root_cause_accuracy = correct_root_cause_cases / total_failure_cases
 
 传统的做法是，拿到步骤目标，直接调工具，拿到结果，走下一步。这就像蒙着眼睛走路，走到哪算哪，出了问题也不知道是哪一步偏了。
 
-XTAO 引入了 **TAO（Think-Action-Observation，思考-行动-观察）** 循环来解决这个问题。
+XTAO 引入了 **TAO（Think-Action-Observation）** 循环来解决这个问题。
 
 TAO 是 XTAO 的**步骤级执行引擎**。它的名字已经说明了运转方式，Think（思考当前状态和目标）、Action（执行选定的动作）、Observation（观察并解读执行结果）。每一轮循环，Agent 都要先想清楚再走，走完之后还要把看到的东西重新整理成可用的事实，然后再进入下一轮。
 
@@ -336,11 +367,13 @@ TAO 是 XTAO 的**步骤级执行引擎**。它的名字已经说明了运转方
 
 这五类判断就像一个人的内心独白，我在哪，我要去哪，我该走哪条路，要不要停，有没有危险。
 
-TAO 里的 Action 不是裸的工具调用，而是面向目标的操作封装。设计 Action 时有几条核心原则。业务完整性，一个 Action 要完成一个业务上完整的操作，内部可以调一个工具、多个工具，甚至启动一个子 Agent。正交性，Action 之间的职责边界要清晰，尽量减少重叠。子 Agent 封装，复杂子任务可以封装成子 Agent，主 Agent 通过 Action 启动它。参数和返回值最小化，参数要容易获取，返回值只暴露调用方需要的信息，避免 Observation 解读困难。
+但这里有个关键问题，LLM 的判断靠谱吗？万一它一直说 CONTINUE 但实际上在原地打转呢？？？
 
-它有四种类型，tool_call 调用外部工具、internal_api 调用系统内部接口、user_interaction 向用户提问、aggregate 组合多个子动作。
+XTAO 的解法是，**代码会覆盖 LLM 的退出决策**。TAOLoopController 有 7 条优先级规则，从高到低依次检查。控制限制超限就强制 INTERRUPT，成功标准满足就强制 FINISH，同一个 action 连续选太多次就判定死循环强制 CLARIFY，最近几轮没有新进展就判定停滞强制 CLARIFY。还有一条，如果 LLM 说 RETRY 但重试预算耗尽了，自动升级为 REPLAN。
 
-为了让大模型选得准，每个 Action 还可以带上丰富的元数据，比如 tags（标签）、intents（意图）、applicable_scenarios（适用场景）、inapplicable_scenarios（不适用场景）、permissions（权限）、cost（成本）、risk（风险）、alternatives（替代工具）等。
+你想想看，这说明啥。LLM 可以「想」怎么走就怎么走，但代码永远在它头上看着，一旦发现不对劲就强制接管。这就像给 Agent 配了一个不会犯困的副驾驶。
+
+TAO 里的 Action 也不是裸的工具调用，而是面向目标的操作封装。每个 Action 可以带上丰富的元数据，tags（标签）、intents（意图）、applicable_scenarios（适用场景）、permissions（权限）、cost（成本）、risk（风险）、alternatives（替代工具）。
 
 执行前的筛选是一条流水线。
 
@@ -350,11 +383,11 @@ TAO 里的 Action 不是裸的工具调用，而是面向目标的操作封装�
 全部 Action → 意图/标签筛选 → 规则引擎 → 前置条件/权限 → 历史成功率 → 信息增益 → 大模型粗筛 → 大模型精筛 → 最终 Action
 ```
 
-代码先做确定性筛选，意图、标签、前置条件、权限，筛不掉的再交给 LLM。历史成功率低的 Action 会被降权或临时禁用。信息增益高的 Action（能补足缺失信息）会优先排前。粗筛用 Fast LLM 和少量上下文，精筛用 Pro LLM 和完整上下文，兼顾成本和准确率。
+代码先做确定性筛选，意图、标签、前置条件、权限，筛不掉的再交给 LLM。这里有一个短路设计我觉得特别实用，如果确定性筛选后候选数已经≤10 个了，直接按成功率排序返回，跳过后面所有昂贵的 LLM 阶段。大部分情况下，确定性筛选就够了，不需要 LLM 上场。反正我觉得这个设计挺聪明的，能省钱的地方就省钱。
 
-执行时还要再次检查，Action 是否在候选空间、必填参数是否提供、权限是否满足、参数是否符合 schema。硬约束永远不能跳过。
+粗筛用 Fast LLM 和少量上下文，精筛用 Pro LLM 和完整上下文，兼顾成本和准确率。
 
-Action 执行完，拿到的是原始输出。但原始输出不等于事实。Observation Interpreter 会做几件事，判断执行状态是成功还是失败、提取新事实（每条事实都要绑定证据来源）、识别信息缺口、检测异常。
+执行完拿到原始输出，但原始输出不等于事实。Observation Interpreter 会做几件事，判断执行状态是成功还是失败、提取新事实（每条事实都要绑定证据来源）、识别信息缺口、检测异常。
 
 这里有一个关键设计，**HTTP 200 不等于真正的成功**。工具返回了数据不代表数据是对的。Observation 要做空数据检测、异常识别，防止把垃圾数据当事实写回状态。
 
@@ -367,8 +400,8 @@ class TAOEngine:
     """TAO controlled state loop with double-layer supervision."""
 
     async def run(self, user_input, candidate_actions, ...):
-        """Inner loop: Think -> Action -> Observation.
-        Outer loop: supervisor checks goal drift every N rounds.
+        """Inner loop, Think -> Action -> Observation.
+        Outer loop, supervisor checks goal drift every N rounds.
         """
         while True:
             think = await self.think_engine.think(state)
@@ -382,9 +415,7 @@ class TAOEngine:
                     return self._build_result(state, review)
 ```
 
-和 Replan 一样，TAO 也有自己的评估体系，分 Think 指标、Action 指标、Observation 指标、整体指标四层。Think 指标包括动作选择准确率、参数准确率、目标判断准确率等。Action 指标包括执行成功率、响应时间。Observation 指标包括事实提取准确率、证据绑定准确率、工具结果误读率等。整体指标包括最终任务成功率、平均 TAO 轮数、平均工具调用次数。
-
-支持 LLM as Judge 自动评估，也支持导入人工金标答案做对比。
+和 Replan 一样，TAO 也有自己的评估体系，分 Think 指标、Action 指标、Observation 指标、整体指标四层。支持 LLM as Judge 自动评估，也支持导入人工金标答案做对比。
 
 ---
 
@@ -394,7 +425,7 @@ class TAOEngine:
 
 所以 Plan 不能是一份死的剧本。它必须是一份活的、能自我感知的运行时对象。
 
-XTAO 想做的就是这样一件事。G4C 让它想清楚，Checkpoint 让它能感知，Replan 让它能修正，FailureTracer 让它能找到真正的根因，TrustStateManager 让它知道哪些结果还能信。
+XTAO 想做的就是这样一件事。G4C 让它想清楚，Checkpoint 让它能感知，Replan 让它能修正，FailureTracer 让它能找到真正的根因，TrustStateManager 让它知道哪些结果还能信，TAO 让它每一步都走得有章法。
 
 这些机制加在一起，Agent 才不会在错误的路上越跑越远。
 
@@ -409,7 +440,7 @@ XTAO 已经开源，项目地址在这里，
 ```bash
 # 1. 复制环境变量模板
 cp .env.example .env
-# 填入你的 SiliconFlow API_KEY 和模型配置
+# 填入你的 API_KEY 和模型配置
 
 # 2. 安装依赖并启动
 python -m venv .venv
@@ -420,13 +451,28 @@ python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
 
 然后就可以用 SDK 或者 curl 调用 `/api/plan/run`。
 
+也可以启动前端 Demo，在浏览器里直接对话，
+
+```bash
+cd frontend && npm install && npm run dev
+# 浏览器访问 http://localhost:5173/
+```
+
+前端支持流式输出、Markdown 渲染、中英文切换，每一步的耗时也会实时显示。
+
 ---
 
 这套方案不是万能的。它让 Plan 更鲁棒，但没有让 Agent 变得更聪明。真正决定上限的，还是 Goal 定义得清不清楚，Context 给得全不全，LLM 的判断稳不稳定。
 
-但我也确实觉得，比起之前那种「生成一份步骤列表然后祈祷它能跑完」的做法，XTAO 至少让 Agent 在执行过程中有了一张地图、一套体检机制、和一个急救包。
+但我也确实觉得，比起之前那种「生成一份步骤列表然后祈祷它能跑完」的做法，XTAO 至少让 Agent 在执行过程中有了一张地图、一套体检机制、和一个急救包。我是真的觉得，这就是从「能跑」到「能信」的区别。
 
 它不是让 Plan 不再失败，而是让 Plan 在失败时知道自己在哪，以及该怎么回到正轨。
+
+回到开头那个 PDF 的故事。如果当时有 FailureTracer，它会告诉我，别盯着格式化那一步了，病根在分段。如果当时有 TrustStateManager，它会告诉我，分段那一步的输出已经被标记为 INVALID 了，后面所有依赖它的结果都是 DIRTY 的，别信。
+
+这就是把 Plan 从「步骤列表」升级为「运行时对象」的意义。Plan 不再是一份写好就不再变的剧本，它是一个活的东西，能感知自己的状态，能追踪自己的错误，能在出错时自我修正。
+
+Agent 跑偏这件事，我忍了很久。但现在，终于不用再忍了。
 
 这可能就是 Agent 从「能跑」走向「能信」的关键一步吧。
 

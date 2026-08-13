@@ -97,6 +97,14 @@ XTAO/
 │   ├── test_tracing.py             # Unit tests (failure tracing)
 │   ├── test_live.py                # Live LLM integration test
 │   └── test_tao_live.py            # Live TAO end-to-end test
+├── frontend/                      # React + Vite chat demo
+│   ├── src/
+│   │   ├── api.ts                 # SSE streaming client
+│   │   ├── i18n.tsx               # Bilingual (zh/en) i18n
+│   │   ├── App.tsx                # Main app + stream state management
+│   │   └── components/            # Chat panel, live progress, result card, etc.
+│   ├── vite.config.ts             # Vite config (/api proxy)
+│   └── package.json
 ├── docs/
 │   ├── API.md / API_zh.md          # Bilingual REST API reference
 │   └── SDK.md / SDK_zh.md          # Bilingual Python SDK docs
@@ -146,6 +154,8 @@ docker compose up -d
 | `PROMETHEUS_ENABLED` | Enable Prometheus metrics | `false` |
 | `TCC_ENABLED` | Enable TCC Replan mode | `false` |
 | `MAX_REPLAN_TOTAL` | Max Replan attempts | `3` |
+| `CORS_ORIGINS` | Allowed CORS origins (comma-separated, for Vite dev) | `http://localhost:5173` |
+| `FRONTEND_DIST` | Frontend build output dir (skip mounting if absent) | `frontend/dist` |
 | `HOST` | Server host | `0.0.0.0` |
 | `PORT` | Server port | `8000` |
 
@@ -165,6 +175,7 @@ All routes are prefixed with `/api`. **`POST /api/plan/run` is the primary entry
 | Method | Path | Description |
 |---|---|---|
 | **`POST`** | **`/api/plan/run`** | **Main orchestration entry point** (full G4C lifecycle) |
+| `POST` | `/api/plan/run/stream` | Main orchestration entry point (SSE streaming output) |
 | `POST` | `/api/plan/generate` | Generate G4C Plan (supports iteration mode) |
 | `POST` | `/api/plan/verify` | Evaluate Plan quality (G4C 5 dimensions) |
 | `POST` | `/api/plan/execute` | Execute Plan step-by-step with checkpoints |
@@ -247,6 +258,45 @@ TAO Actions are goal-oriented wrappers, not raw tools. Designing them well impro
 - **Execution guards** — the runtime checks candidate-space membership, required params, permissions, and parameter schema before execution.
 
 See [docs/API.md](docs/API.md) for the full filtering pipeline and [docs/SDK.md](docs/SDK.md) for usage examples.
+
+## Frontend Demo
+
+A React + Vite chat demo is included that puts `POST /api/plan/run` to work: type a task in the chat box and watch the streaming output, final status, G4C summary, step trace, and replan/verification metrics in real time.
+
+![Frontend Demo screenshot](docs/images/frontend_demo.jpg)
+
+Highlights:
+
+- **Streaming output** — SSE-based (`POST /api/plan/run/stream`) real-time display of Plan generation and step execution, including LLM reasoning tokens and token-by-token content generation.
+- **Markdown rendering** — Step outputs and final results support full Markdown (headings, lists, code blocks, tables, etc.).
+- **Bilingual UI** — Toggle between Chinese and English with one click.
+- **Timing stats** — Per-phase (generate/verify/execute) and per-step (LLM call/checkpoint) elapsed time displayed inline.
+- **G4C visualization** — Expand to inspect Goal, Context, Choice, Checkpoint, and Correction details.
+- **Config panel** — Toggle TAO, skip checkpoint, adjust replan count, verification threshold, and more.
+
+### Production mode (FastAPI same-origin)
+
+```bash
+# Build frontend assets to frontend/dist/
+cd frontend && npm install && npm run build && cd ..
+
+# Start backend (auto-serves frontend/dist/)
+python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
+```
+
+Open `http://localhost:8000/` in your browser.
+
+### Development mode (hot reload)
+
+```bash
+# Terminal 1: start backend
+python -m uvicorn xtao.main:app --port 8000
+
+# Terminal 2: start Vite dev server (proxies /api to :8000)
+cd frontend && npm install && npm run dev
+```
+
+Open `http://localhost:5173/` — frontend code changes hot-reload instantly.
 
 ## Testing
 

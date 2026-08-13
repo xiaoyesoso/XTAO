@@ -207,6 +207,39 @@ curl -X POST http://localhost:8000/api/plan/run \
 
 ---
 
+#### 2.2.1a 主编排入口（SSE 流式输出）
+
+- **方法与路径**：`POST /api/plan/run/stream`
+- **描述**：与 `POST /api/plan/run` 功能完全一致，但通过 Server-Sent Events（SSE）流式返回中间过程。请求体与 `/api/plan/run` 相同，响应为 `text/event-stream`。
+
+**SSE 事件类型**：
+
+| 事件 `type` | 说明 |
+|---|---|
+| `phase` | 阶段切换（generate / verify / execute），携带 `elapsed_ms` |
+| `plan_reasoning_delta` | Plan 生成阶段的 LLM 推理 token（reasoning_content） |
+| `plan_delta` | Plan 生成阶段的 LLM 内容 token |
+| `plan_generated` | Plan 生成完成，携带完整 Plan 和 `elapsed_ms` |
+| `step_start` | 步骤开始，携带步骤索引、ID、目标 |
+| `step_reasoning_delta` | 步骤执行的 LLM 推理 token |
+| `step_output_delta` | 步骤执行的 LLM 内容 token |
+| `step_output` | 步骤执行完成，携带输出和 `elapsed_ms` |
+| `checkpoint` | Checkpoint 评估结果，携带 `passed` 和 `elapsed_ms` |
+| `replan` | 触发 Replan，携带次数和纠偏策略 |
+| `step_done` | 步骤完成，携带状态和 `elapsed_ms` |
+| `done` | 全部完成，携带最终 `result`、`timings` 和 `total_ms` |
+| `error` | 发生错误 |
+
+**curl 示例**：
+
+```bash
+curl -N -X POST http://localhost:8000/api/plan/run/stream \
+  -H "Content-Type: application/json" \
+  -d '{"user_input": "帮我总结这份财报"}'
+```
+
+---
+
 #### 2.2.2 生成 G4C Plan
 
 - **方法与路径**：`POST /api/plan/generate`

@@ -173,7 +173,10 @@ class PlanGenerator:
         ) from last_error
 
     async def generate(
-        self, user_input: str, conversation_history: str = ""
+        self,
+        user_input: str,
+        conversation_history: str = "",
+        on_progress=None,
     ) -> Plan:
         """Generate a complete Plan.
 
@@ -183,6 +186,10 @@ class PlanGenerator:
         Args:
             user_input: User input
             conversation_history: Conversation history, used to extract context
+            on_progress: Optional sync callback for progress events. When
+                provided, the single-shot generation streams its raw JSON
+                tokens as ``plan_delta`` events, and the step-by-step
+                fallback emits a sub-phase event before each G4C element.
 
         Returns:
             Complete Plan object with status READY
@@ -193,7 +200,7 @@ class PlanGenerator:
         # 2. Try fast single-shot generation
         try:
             return await self._generate_single_shot(
-                user_input, conversation_history, rag_context
+                user_input, conversation_history, rag_context, on_progress=on_progress
             )
         except Exception as e:
             logger.warning(
@@ -202,9 +209,20 @@ class PlanGenerator:
             )
 
         # 3. Fallback to original step-by-step generation
+        def _sub(name: str, label: str):
+            if on_progress is not None:
+                try:
+                    on_progress({"type": "phase", "phase": "generate", "sub": name, "message": label})
+                except Exception:
+                    pass
+
+        _sub("goal", "正在生成目标 Goal…")
         goal = await self.generate_goal(user_input, rag_context)
+        _sub("context", "正在生成上下文 Context…")
         context = await self.generate_context(conversation_history, Constraints())
+        _sub("choice", "正在生成路径选择 Choice…")
         choice = await self.generate_choice(goal, context)
+        _sub("checkpoint", "正在生成检查点 Checkpoint…")
         checkpoints = await self.generate_checkpoints(choice.steps)
         plan_dict = {
             "goal": goal.model_dump(),
@@ -212,6 +230,7 @@ class PlanGenerator:
             "choice": choice.model_dump(),
             "checkpoint": [cp.model_dump() for cp in checkpoints],
         }
+        _sub("correction", "正在生成纠偏规则 Correction…")
         corrections = await self.generate_corrections(plan_dict, rag_context)
 
         return Plan(
@@ -224,12 +243,15 @@ class PlanGenerator:
         )
 
     async def _generate_single_shot(
-        self, user_input: str, conversation_history: str, rag_context: str
+        self, user_input: str, conversation_history: str, rag_context: str,
+        on_progress=None,
     ) -> Plan:
         """Generate a complete Plan in a single LLM call.
 
         This is much faster than the step-by-step approach because it avoids
-        5 sequential round-trips to the LLM.
+        5 sequential round-trips to the LLM. When on_progress is provided,
+        the raw JSON tokens are streamed as ``plan_delta`` events so the
+        client can show the generation happening instead of a dead wait.
         """
         schema = Plan.model_json_schema()
         system_prompt = f"""You are the XTAO engine. Generate a complete G4C Plan as a single JSON object.
@@ -259,7 +281,36 @@ Additional context: {rag_context or '(none)'}
 
 Generate the complete Plan JSON now."""
 
-        response = await self.llm_service.chat(system_prompt, user_prompt)
+        if on_progress is not None:
+            # Stream the raw JSON tokens to the client as they arrive, then
+            # parse the accumulated text. Falls back to non-streaming chat on
+            # any stream error so generation still succeeds.
+            content_chunks: list[str] = []
+
+            def _emit(event: dict) -> None:
+                try:
+                    on_progress(event)
+                except Exception:
+                    pass
+
+            try:
+                async for chunk in self.llm_service.chat_stream(system_prompt, user_prompt):
+                    kind = chunk.get("type", "content")
+                    text = chunk.get("text", "")
+                    if kind == "reasoning":
+                        _emit({"type": "plan_reasoning_delta", "delta": text})
+                    else:
+                        content_chunks.append(text)
+                        _emit({"type": "plan_delta", "delta": text})
+                response = "".join(content_chunks)
+            except Exception as stream_err:
+                logger.warning("plan_delta stream failed (%s), falling back to non-stream", type(stream_err).__name__)
+                if content_chunks:
+                    response = "".join(content_chunks)
+                else:
+                    response = await self.llm_service.chat(system_prompt, user_prompt)
+        else:
+            response = await self.llm_service.chat(system_prompt, user_prompt)
         data = _extract_json(response)
 
         # The LLM may wrap the Plan in a 'plan' key

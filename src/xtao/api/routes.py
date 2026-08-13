@@ -26,9 +26,12 @@ Provides REST API for the G4C Plan mechanism:
 """
 
 from typing import Any
+import asyncio
+import json
 
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from xtao.models import (
     Plan,
@@ -539,6 +542,49 @@ async def run_plan(
         config=req.config,
     )
     return result
+
+
+@router.post("/plan/run/stream")
+async def run_plan_stream(
+    req: RunPlanRequest,
+    orchestrator: PlanOrchestrator = Depends(get_orchestrator),
+):
+    """Streaming variant of /plan/run.
+
+    Emits Server-Sent Events (SSE) as the orchestration progresses:
+    phase / plan_generated / step_start / step_output / checkpoint /
+    replan / step_done / done / error. The final `done` event carries the
+    full OrchestratorResult identical to the non-streaming endpoint.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def on_progress(event: dict) -> None:
+        queue.put_nowait(event)
+
+    async def event_stream():
+        task = asyncio.create_task(
+            orchestrator.run(
+                user_input=req.user_input,
+                conversation_history=req.conversation_history,
+                config=req.config,
+                on_progress=on_progress,
+            )
+        )
+        try:
+            while True:
+                event = await queue.get()
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                if event.get("type") in ("done", "error"):
+                    break
+        finally:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.post("/plan/generate")

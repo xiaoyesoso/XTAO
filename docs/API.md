@@ -195,6 +195,38 @@ curl -X POST http://localhost:8000/api/plan/run \
 
 ---
 
+#### POST /api/plan/run/stream
+
+Identical functionality to `POST /api/plan/run`, but returns intermediate progress via Server-Sent Events (SSE). The request body is the same as `/api/plan/run`; the response has `Content-Type: text/event-stream`.
+
+**SSE event types**:
+
+| Event `type` | Description |
+|---|---|
+| `phase` | Phase transition (generate / verify / execute), includes `elapsed_ms` |
+| `plan_reasoning_delta` | LLM reasoning tokens during Plan generation (reasoning_content) |
+| `plan_delta` | LLM content tokens during Plan generation |
+| `plan_generated` | Plan generation complete, includes full Plan and `elapsed_ms` |
+| `step_start` | Step started, includes index, ID, objective |
+| `step_reasoning_delta` | LLM reasoning tokens during step execution |
+| `step_output_delta` | LLM content tokens during step execution |
+| `step_output` | Step execution complete, includes output and `elapsed_ms` |
+| `checkpoint` | Checkpoint evaluation result, includes `passed` and `elapsed_ms` |
+| `replan` | Replan triggered, includes count and correction strategy |
+| `step_done` | Step finished, includes status and `elapsed_ms` |
+| `done` | All complete, includes final `result`, `timings`, and `total_ms` |
+| `error` | An error occurred |
+
+**curl example**:
+
+```bash
+curl -N -X POST http://localhost:8000/api/plan/run/stream \
+  -H "Content-Type: application/json" \
+  -d '{"user_input": "Summarize this financial report"}'
+```
+
+---
+
 #### POST /api/plan/generate
 
 Generate a G4C Plan. Supports both normal generation and iterative generation (generate-evaluate-correct loop).

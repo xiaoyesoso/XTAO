@@ -161,6 +161,14 @@ XTAO/
 │   ├── test_tracing.py             # 失败回溯单元测试
 │   ├── test_live.py                # 真实 LLM 集成测试
 │   └── test_tao_live.py            # TAO 真实模型端到端测试
+├── frontend/                      # React + Vite 对话式 Demo
+│   ├── src/
+│   │   ├── api.ts                 # SSE 流式客户端
+│   │   ├── i18n.tsx               # 中英文 i18n
+│   │   ├── App.tsx                # 主应用 + 流式状态管理
+│   │   └── components/            # 聊天面板、实时进度、结果卡片等
+│   ├── vite.config.ts             # Vite 配置（/api 代理）
+│   └── package.json
 ├── Dockerfile
 ├── docker-compose.yml
 ├── pyproject.toml
@@ -205,7 +213,18 @@ docker compose up -d
 
 ## 前端 Demo
 
-项目内置一个 React + Vite 的对话式 demo，把 `POST /api/plan/run` 真正用起来：在聊天框输入任务，即可看到最终状态、G4C 五要素摘要、步骤执行轨迹与 replan/验证指标。
+项目内置一个 React + Vite 的对话式 demo，把 `POST /api/plan/run` 真正用起来：在聊天框输入任务，即可看到流式输出、最终状态、G4C 五要素摘要、步骤执行轨迹与 replan/验证指标。
+
+![前端 Demo 截图](docs/images/frontend_demo.jpg)
+
+功能亮点：
+
+- **流式输出**：通过 SSE（`POST /api/plan/run/stream`）实时展示 Plan 生成与步骤执行过程，包括 LLM 推理过程（reasoning）和内容生成的逐字输出。
+- **Markdown 渲染**：步骤输出与最终结果支持完整 Markdown 渲染（标题、列表、代码块、表格等）。
+- **中英文切换**：界面文本一键切换中/英文。
+- **耗时统计**：各阶段（生成/验证/执行）和每步（LLM 调用/Checkpoint）的耗时实时显示。
+- **G4C 可视化**：展开即可查看 Goal、Context、Choice、Checkpoint、Correction 五要素详情。
+- **配置面板**：可调节 TAO 开关、Checkpoint 跳过、Replan 次数、验证阈值等参数。
 
 ### 生产模式（FastAPI 同源托管）
 
@@ -268,6 +287,7 @@ cd frontend && npm install && npm run dev
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | **POST** | **`/api/plan/run`** | **主编排入口**（完整 G4C 生命周期） |
+| POST | `/api/plan/run/stream` | 主编排入口（SSE 流式输出） |
 | POST | `/api/plan/generate` | 生成 G4C Plan（支持迭代模式） |
 | POST | `/api/plan/verify` | 评估 Plan 质量（G4C 五维度） |
 | POST | `/api/plan/execute` | 执行 Plan（逐步 + 检查点 + 纠偏） |

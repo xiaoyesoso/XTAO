@@ -112,6 +112,21 @@ XTAO/
 │   ├── test_tracing.py                    # Unit tests (failure tracing)
 │   ├── test_live.py                       # Live LLM integration test
 │   └── test_tao_live.py                   # Live TAO end-to-end test
+├── frontend/                              # React + Vite chat demo
+│   ├── src/
+│   │   ├── api.ts                         # SSE streaming client
+│   │   ├── i18n.tsx                       # Bilingual (zh/en) i18n provider
+│   │   ├── App.tsx                        # Main app + stream state management
+│   │   ├── types.ts                       # TypeScript type definitions
+│   │   └── components/
+│   │       ├── ChatPanel.tsx              # Chat input + message list
+│   │       ├── LiveProgress.tsx           # Real-time streaming progress
+│   │       ├── ResultCard.tsx             # Final result with Markdown rendering
+│   │       ├── SettingsPanel.tsx          # Config panel (TAO, checkpoint, etc.)
+│   │       ├── G4CSummary.tsx             # G4C five-element visualization
+│   │       └── StepTrace.tsx              # Step execution trace
+│   ├── vite.config.ts                     # Vite config with /api proxy
+│   └── package.json
 ├── .trae/                                 # OpenSpec Trae skills (not in git)
 ├── openspec/                              # OpenSpec specs and changes (not in git)
 └── 规划执行/                               # Original requirement documents (not in git)
@@ -230,6 +245,7 @@ All routes are prefixed with `/api`. `POST /api/plan/run` is the **primary entry
 |---|---|---|
 | GET | `/api/health` | Health check |
 | **POST** | **`/api/plan/run`** | **Main orchestration entry point** (full G4C lifecycle) |
+| POST | `/api/plan/run/stream` | Main orchestration entry point (SSE streaming output) |
 | POST | `/api/plan/generate` | Generate G4C Plan (supports iteration mode) |
 | POST | `/api/plan/verify` | Evaluate Plan quality (G4C 5 dimensions) |
 | POST | `/api/plan/execute` | Execute Plan (step-by-step with checkpoints) |
@@ -337,7 +353,9 @@ docker run -p 8000:8000 --env-file .env xtao
 - Change `agent-plan-g4c`: **all tasks complete** (proposal → specs → design → tasks → implement)
 - Change `agent-plan-tao-action-selection`: **all tasks complete** (proposal → specs → design → tasks → implement)
 - Core engine fully implemented: G4C generation, verification, execution, correction, Replan, TCC Replan, failure tracing, trust state, backtracking (5 levels), candidate paths, cross-turn tracking, TAO/ReAct execution engine, and the `PlanOrchestrator` main entry point
+- SSE streaming endpoint (`POST /api/plan/run/stream`) with real-time LLM reasoning + content token streaming
+- Frontend demo (React + Vite): streaming output, Markdown rendering, bilingual UI (zh/en), per-step timing stats, G4C visualization, config panel
 - Python SDK shipped (`xtao.sdk.XTAOClient`) with full live-server end-to-end verification
-- Docs: bilingual README (`README.md` (Chinese) / `README_en.md` (English)), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`)
+- Docs: bilingual README (`README.md` (Chinese) / `README_en.md` (English)), bilingual API reference (`docs/API.md` / `docs/API_zh.md`), bilingual SDK docs (`docs/SDK.md` / `docs/SDK_zh.md`), project retrospective article (`docs/wechat_article_xplan.md`)
 - 64 unit tests passing (`tests/test_plan.py` + `tests/test_tao.py`)
 - Live LLM integration tested with SiliconFlow DeepSeek

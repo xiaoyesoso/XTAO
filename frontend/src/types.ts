@@ -95,6 +95,7 @@ export interface OrchestratorConfig {
   max_iterations?: number;
   verify_before_execute?: boolean;
   verification_threshold?: number;
+  skip_checkpoint?: boolean;
   enable_failure_tracing?: boolean;
   enable_trust_state?: boolean;
   enable_progressive_backtracking?: boolean;

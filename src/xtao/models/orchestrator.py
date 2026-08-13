@@ -16,6 +16,7 @@ class OrchestratorConfig(BaseModel):
     max_iterations: int = Field(default=3, description="Max iterations for iterative generation")
     verify_before_execute: bool = Field(default=True, description="Whether to verify plan before execution")
     verification_threshold: float = Field(default=0.8, description="Verification score threshold (0-1)")
+    skip_checkpoint: bool = Field(default=False, description="Skip checkpoint evaluation after each step (faster but less rigorous)")
     enable_failure_tracing: bool = Field(default=True, description="Enable failure tracing on checkpoint failure")
     enable_trust_state: bool = Field(default=True, description="Enable trust state management during execution")
     enable_progressive_backtracking: bool = Field(default=True, description="Enable progressive backtracking on failure")
