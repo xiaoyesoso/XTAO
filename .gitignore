@@ -48,7 +48,16 @@ htmlcov/
 # Docker
 *.log
 
-# Node.js (SVG-to-PNG conversion tooling)
+# Node.js (SVG-to-PNG conversion tooling + frontend demo)
 node_modules/
 package-lock.json
 package.json
+
+# Frontend demo build output
+frontend/node_modules/
+frontend/dist/
+frontend/package-lock.json
+frontend/tsconfig.tsbuildinfo
+
+# But keep the frontend package.json (root package.json is for SVG tooling only)
+!frontend/package.json

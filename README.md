@@ -30,6 +30,9 @@ G4C 系统性消除 Agent 执行过程中的目标不确定性、上下文不确
   - [快速开始](#快速开始)
     - [本地开发](#本地开发)
     - [Docker 部署](#docker-部署)
+  - [前端 Demo](#前端-demo)
+    - [生产模式（FastAPI 同源托管）](#生产模式fastapi-同源托管)
+    - [开发模式（热更新）](#开发模式热更新)
   - [环境变量](#环境变量)
   - [API 概览](#api-概览)
     - [健康检查与监控](#健康检查与监控)
@@ -200,6 +203,36 @@ docker compose up -d
 
 ---
 
+## 前端 Demo
+
+项目内置一个 React + Vite 的对话式 demo，把 `POST /api/plan/run` 真正用起来：在聊天框输入任务，即可看到最终状态、G4C 五要素摘要、步骤执行轨迹与 replan/验证指标。
+
+### 生产模式（FastAPI 同源托管）
+
+```bash
+# 构建前端产物到 frontend/dist/
+cd frontend && npm install && npm run build && cd ..
+
+# 启动后端（会自动托管 frontend/dist/）
+python -m uvicorn xtao.main:app --host 0.0.0.0 --port 8000
+```
+
+浏览器访问 `http://localhost:8000/` 即可使用 demo。
+
+### 开发模式（热更新）
+
+```bash
+# 终端 1：启动后端
+python -m uvicorn xtao.main:app --port 8000
+
+# 终端 2：启动 Vite 开发服务器（/api 自动代理到 :8000）
+cd frontend && npm install && npm run dev
+```
+
+访问 `http://localhost:5173/`，修改前端代码自动刷新。
+
+---
+
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
@@ -212,6 +245,8 @@ docker compose up -d
 | `PROMETHEUS_ENABLED` | 启用 Prometheus 监控 | `false` |
 | `TCC_ENABLED` | 启用 TCC Replan 模式 | `false` |
 | `MAX_REPLAN_TOTAL` | 最大 Replan 次数 | `3` |
+| `CORS_ORIGINS` | 允许跨域来源（逗号分隔，开发期 Vite 用） | `http://localhost:5173` |
+| `FRONTEND_DIST` | 前端构建产物目录（不存在则不挂载） | `frontend/dist` |
 | `HOST` | 服务监听地址 | `0.0.0.0` |
 | `PORT` | 服务监听端口 | `8000` |
 

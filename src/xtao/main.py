@@ -6,9 +6,12 @@ Plan is not a step list, but a checkable, correctable, executable runtime object
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import make_asgi_app
 
 from xtao.api import router
@@ -152,13 +155,34 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    # Register API routes
+    # CORS: allow the Vite dev server (and any configured origins) to call the
+    # API directly during development. Origins come from CORS_ORIGINS (comma
+    # separated); defaults to the Vite dev server on :5173.
+    cors_origins = [
+        o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if o.strip()
+    ]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Register API routes (registered before the static mount so /api/* wins)
     app.include_router(router)
 
     # Prometheus metrics endpoint
     if os.getenv("PROMETHEUS_ENABLED", "false").lower() == "true":
         metrics_app = make_asgi_app()
         app.mount("/metrics", metrics_app)
+
+    # Serve the built frontend (same-origin, no CORS needed in production).
+    # The dist path is configurable; nothing is mounted if the folder is absent
+    # so development without a build still works.
+    frontend_dist = os.getenv("FRONTEND_DIST", "frontend/dist")
+    if Path(frontend_dist).is_dir():
+        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
     return app
 
