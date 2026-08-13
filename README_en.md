@@ -359,6 +359,16 @@ Plan is not a step list, but a **checkable, correctable, executable runtime obje
 - **5 correction strategies** — Retry, Replan, Clarify, Rollback, Abort.
 - **Linear Plan is default** — DAG Plan is an optional advanced mode.
 
+### Architecture Diagrams
+
+| Diagram | Description |
+|---|---|
+| ![Replan flow](docs/images/replan_flow.png) | **Replan flow**: trigger detection → code judge → LLM judge → three granularities (Step / Partial / Global) |
+| ![Failure tracing](docs/images/failure_tracing.png) | **Failure tracing**: failure point ≠ root cause ≠ rollback point ≠ replan start; code builds chain + LLM localizes root cause |
+| ![Trust states](docs/images/trust_states.png) | **Trust states**: Verified / Available / Suspicious / Invalid / Dirty; INVALID triggers BFS cascade marking |
+| ![TCC Replan](docs/images/tcc_replan.png) | **TCC Replan**: Try (dry-run validation) → Confirm (formal execution) → Cancel (rollback temp state) |
+| ![Action filter pipeline](docs/images/action_filter.png) | **Action multi-stage filter**: intent/tag → rules → preconditions → success rate → info gain → LLM coarse → LLM fine |
+
 ## TAO in a Nutshell
 
 **TAO** stands for **Think - Action - Observation**, the step-level controlled state loop engine in XTAO.

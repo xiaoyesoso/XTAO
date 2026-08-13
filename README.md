@@ -442,6 +442,16 @@ Plan 不是步骤列表，而是**可检查、可纠偏、可执行的运行时�
 - **5 种纠偏策略**：Retry、Replan、Clarify、Rollback、Abort。
 - **线性 Plan 为默认**：DAG Plan 为可选高级模式。
 
+### 架构设计图
+
+| 架构图 | 说明 |
+|---|---|
+| ![Replan 流程图](docs/images/replan_flow.png) | **Replan 流程**：触发检测 → 代码判定 → LLM 判定 → 三种粒度执行（Step / Partial / Global） |
+| ![失败回溯图](docs/images/failure_tracing.png) | **失败回溯**：失败点 ≠ 根因点 ≠ 回滚点 ≠ Replan 起点，代码建链 + LLM 语义定位 |
+| ![信任状态图](docs/images/trust_states.png) | **信任状态**：Verified / Available / Suspicious / Invalid / Dirty，INVALID 触发 BFS 级联标记 |
+| ![TCC Replan 图](docs/images/tcc_replan.png) | **TCC Replan**：Try（dry-run 验证）→ Confirm（正式执行）→ Cancel（回滚临时态） |
+| ![Action 筛选流水线](docs/images/action_filter.png) | **Action 多级筛选**：意图/标签 → 规则 → 前置条件 → 成功率 → 信息增益 → LLM 粗筛 → LLM 精筛 |
+
 ---
 
 ## TAO 简介
