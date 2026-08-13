@@ -18,6 +18,10 @@ G4C systematically eliminates five types of uncertainty during Agent execution: 
 
 > The diagram above shows how the five G4C elements surround the Plan runtime object. A more complete project overview is available in [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md).
 
+![Frontend Demo screenshot](docs/images/frontend_demo.jpg)
+
+> The built-in React chat demo supports SSE streaming, Markdown rendering, bilingual UI (zh/en), and real-time timing stats. See the [Frontend Demo](#frontend-demo) section for details.
+
 ---
 
 ## Features
@@ -262,8 +266,6 @@ See [docs/API.md](docs/API.md) for the full filtering pipeline and [docs/SDK.md]
 ## Frontend Demo
 
 A React + Vite chat demo is included that puts `POST /api/plan/run` to work: type a task in the chat box and watch the streaming output, final status, G4C summary, step trace, and replan/verification metrics in real time.
-
-![Frontend Demo screenshot](docs/images/frontend_demo.jpg)
 
 Highlights:
 

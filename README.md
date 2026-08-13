@@ -18,6 +18,10 @@ G4C 系统性消除 Agent 执行过程中的目标不确定性、上下文不确
 
 > 上图展示了 G4C 的五个要素如何围绕 Plan  runtime 对象工作。更完整的项目解读可参考 [docs/wechat_article_xplan.md](docs/wechat_article_xplan.md)。
 
+![前端 Demo 截图](docs/images/frontend_demo.jpg)
+
+> 上图为内置的 React 对话式 Demo，支持 SSE 流式输出、Markdown 渲染、中英文切换与实时耗时统计。详见 [前端 Demo](#前端-demo) 章节。
+
 ---
 
 ## 目录
@@ -214,8 +218,6 @@ docker compose up -d
 ## 前端 Demo
 
 项目内置一个 React + Vite 的对话式 demo，把 `POST /api/plan/run` 真正用起来：在聊天框输入任务，即可看到流式输出、最终状态、G4C 五要素摘要、步骤执行轨迹与 replan/验证指标。
-
-![前端 Demo 截图](docs/images/frontend_demo.jpg)
 
 功能亮点：
 
